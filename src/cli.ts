@@ -120,7 +120,7 @@ type ReviewFileState = {
   signature: string;
 };
 
-const FLOW_DIR = ".ai-flow";
+const FLOW_DIR = ".diffguard";
 const GITIGNORE_FILE = ".gitignore";
 const CONFIG_FILE = "config.json";
 const STATE_FILE = "state.md";
@@ -185,7 +185,7 @@ export function main(): void {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`ai-flow: ${message}`);
+    console.error(`diffguard: ${message}`);
     process.exit(1);
   }
 }
@@ -215,14 +215,14 @@ function initFlow(args: string[]): void {
   writeIfMissing(join(flowPath, CONFIG_FILE), `${JSON.stringify(config, null, 2)}\n`, force);
   writeIfMissing(join(flowPath, STATE_FILE), initialState(config), force);
   writeIfMissing(join(flowPath, DECISIONS_FILE), initialDecisions(), force);
-  const ignored = ensureAiFlowGitignore(root);
+  const ignored = ensureDiffguardGitignore(root);
 
   if (!quiet) {
     console.log(`Initialized ${FLOW_DIR}/ in ${root}`);
     if (ignored) {
       console.log(`Updated ${GITIGNORE_FILE} to ignore ${FLOW_DIR}/ validation artifacts.`);
     }
-    console.log("Next: run `ai-flow app --include-untracked` to inspect changes, then `ai-flow check --include-untracked` to record verification.");
+    console.log("Next: run `diffguard app --include-untracked` to inspect changes, then `diffguard check --include-untracked` to record verification.");
   }
 }
 
@@ -236,7 +236,7 @@ function installFlow(args: string[]): void {
     applyAgentDocSnippet("CLAUDE.md");
   }
 
-  console.log("Installed ai-flow validation instructions.");
+  console.log("Installed diffguard validation instructions.");
   console.log(`- ${FLOW_DIR}/${AGENT_SNIPPET_FILE}`);
   if (applyAgentDocs) {
     console.log("- Updated AGENTS.md / CLAUDE.md validation snippets where available.");
@@ -277,7 +277,7 @@ function runCheck(args: string[]): void {
       includeUntracked,
       context,
       output: join(process.cwd(), FLOW_DIR, "diffs", `${timestampForFile()}-check.html`),
-      title: "ai-flow validation diff",
+      title: "diffguard validation diff",
     });
     if (openInBrowser) {
       spawnSync("open", [review.path], { stdio: "ignore" });
@@ -285,7 +285,7 @@ function runCheck(args: string[]): void {
   }
 
   const reportPath = writeCheckReport({ verification, review });
-  console.log("# ai-flow check");
+  console.log("# diffguard check");
   console.log(`Verification: ${verification.skipped ? "skipped" : verification.failed ? "failed" : "passed"}`);
   if (verification.logPath) {
     console.log(`Log: ${relative(process.cwd(), verification.logPath)}`);
@@ -351,7 +351,7 @@ function renderDiffReview(args: string[]): void {
     includeUntracked,
     context,
     output,
-    title: "ai-flow diff review",
+    title: "diffguard diff review",
   });
 
   if (openInBrowser) {
@@ -399,7 +399,7 @@ function launchReviewApp(args: string[]): void {
     stdio: "ignore",
   });
   child.unref();
-  console.log("Opened ai-flow review app.");
+  console.log("Opened diffguard review app.");
 }
 
 function openCurrentRepository(args: string[]): void {
@@ -481,7 +481,7 @@ function recordReport(args: string[]): void {
   mkdirSync(reportDir, { recursive: true });
   const reportPath = join(reportDir, `${timestamp}-${sanitizeFilePart(label)}.md`);
   writeFileSync(reportPath, [
-    `# AI Flow Report: ${label}`,
+    `# Diffguard Report: ${label}`,
     "",
     `Recorded: ${new Date().toISOString()}`,
     "",
@@ -544,7 +544,7 @@ function writeCheckReport(input: {
       ? "failed"
       : "passed";
   const report = [
-    "# AI Flow Validation Check",
+    "# Diffguard Validation Check",
     "",
     `Recorded: ${new Date().toISOString()}`,
     `Branch: ${git.branch || "(unknown)"}`,
@@ -671,7 +671,7 @@ function serveDiffWatch(input: {
     staged: input.staged,
     includeUntracked: input.includeUntracked,
     context: input.context,
-    title: "ai-flow live diff",
+    title: "diffguard live diff",
     watch: true,
   });
 
@@ -704,7 +704,7 @@ function serveDiffWatch(input: {
 
   server.on("error", (error) => {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`ai-flow: diff watch server failed: ${message}`);
+    console.error(`diffguard: diff watch server failed: ${message}`);
     process.exit(1);
   });
 
@@ -1717,9 +1717,9 @@ const searchInput = document.getElementById('review-search');
 const reviewMeta = document.getElementById('review-meta');
 const watchEnabled = reviewMeta?.dataset.watch === 'true';
 const currentSignature = reviewMeta?.dataset.signature || '';
-const uiStateKey = 'ai-flow-diff-ui:' + location.pathname;
-const recentKey = 'ai-flow-diff-recent:' + location.pathname;
-const viewedKey = 'ai-flow-diff-viewed:' + location.pathname;
+const uiStateKey = 'diffguard-diff-ui:' + location.pathname;
+const recentKey = 'diffguard-diff-recent:' + location.pathname;
+const viewedKey = 'diffguard-diff-viewed:' + location.pathname;
 const quickOpen = document.getElementById('quick-open');
 const quickInput = document.getElementById('quick-open-input');
 const quickResults = document.getElementById('quick-open-results');
@@ -2615,7 +2615,7 @@ function formatBytes(bytes) {
 
 function initialState(config: FlowConfig): string {
   return [
-    "# AI Flow Validation State",
+    "# Diffguard Validation State",
     "",
     `Project: ${config.projectName}`,
     `Initialized: ${new Date().toISOString()}`,
@@ -2632,7 +2632,7 @@ function initialState(config: FlowConfig): string {
 
 function initialDecisions(): string {
   return [
-    "# AI Flow Decisions",
+    "# Diffguard Decisions",
     "",
     "Record durable validation decisions here so future checks do not depend on chat memory.",
     "",
@@ -2641,22 +2641,22 @@ function initialDecisions(): string {
 
 function agentSnippet(): string {
   return [
-    "<!-- AI-FLOW:START -->",
-    "## ai-flow Validation",
+    "<!-- DIFFGUARD:START -->",
+    "## diffguard Validation",
     "",
-    "This repository uses ai-flow to verify AI-generated code changes.",
+    "This repository uses diffguard to verify AI-generated code changes.",
     "",
     "Before claiming completion on a code change:",
     "",
-    "- Run `ai-flow check --include-untracked` or a more specific `ai-flow verify -- <command>`.",
-    "- Use `ai-flow app --include-untracked` while changes are still moving.",
+    "- Run `diffguard check --include-untracked` or a more specific `diffguard verify -- <command>`.",
+    "- Use `diffguard app --include-untracked` while changes are still moving.",
     "- Inspect changed hunks with F7 / Shift+F7.",
     "- Use Shift Shift in the diff review to search indexed files, including unchanged files.",
     "- In source previews, use Cmd/Ctrl+Down to jump to the declaration-like match under the cursor.",
     "- Report the verification commands, results, and remaining risks.",
     "",
     "Do not claim a change is done without verification evidence or a precise explanation of why verification could not run.",
-    "<!-- AI-FLOW:END -->",
+    "<!-- DIFFGUARD:END -->",
     "",
   ].join("\n");
 }
@@ -2670,7 +2670,7 @@ function applyAgentDocSnippet(fileName: string): void {
   }
 
   const current = readFileSync(path, "utf8");
-  const markerPattern = /<!-- AI-FLOW:START -->[\s\S]*?<!-- AI-FLOW:END -->\n?/;
+  const markerPattern = /<!-- DIFFGUARD:START -->[\s\S]*?<!-- DIFFGUARD:END -->\n?/;
   const next = markerPattern.test(current)
     ? current.replace(markerPattern, snippet)
     : `${current.trimEnd()}\n\n${snippet}`;
@@ -2679,7 +2679,7 @@ function applyAgentDocSnippet(fileName: string): void {
 
 function ensureInitialized(): void {
   if (!existsSync(join(process.cwd(), FLOW_DIR, CONFIG_FILE))) {
-    throw new Error(`Missing ${FLOW_DIR}/. Run \`ai-flow init\` first.`);
+    throw new Error(`Missing ${FLOW_DIR}/. Run \`diffguard init\` first.`);
   }
 }
 
@@ -2688,7 +2688,7 @@ function ensureWritableFlowState(): void {
     initFlow(["--quiet"]);
     return;
   }
-  ensureAiFlowGitignore(process.cwd());
+  ensureDiffguardGitignore(process.cwd());
 }
 
 function loadConfig(): FlowConfig {
@@ -2718,7 +2718,7 @@ function writeIfMissing(path: string, content: string, force: boolean): void {
   writeFileSync(path, content);
 }
 
-function ensureAiFlowGitignore(root: string): boolean {
+function ensureDiffguardGitignore(root: string): boolean {
   if (git(root, ["rev-parse", "--is-inside-work-tree"]) !== "true") {
     return false;
   }
@@ -2734,7 +2734,7 @@ function ensureAiFlowGitignore(root: string): boolean {
   }
 
   const prefix = content.length === 0 ? "" : content.endsWith("\n") ? "\n" : "\n\n";
-  writeFileSync(path, `${content}${prefix}# ai-flow local validation artifacts\n${FLOW_DIR}/\n`);
+  writeFileSync(path, `${content}${prefix}# diffguard local validation artifacts\n${FLOW_DIR}/\n`);
   return true;
 }
 
@@ -2962,27 +2962,27 @@ function listRecentFiles(dir: string, limit: number): string[] {
 }
 
 function printHelp(): void {
-  console.log(`ai-flow
+  console.log(`diffguard
 
 Validation control plane for AI-generated code changes.
 
 Usage:
-  aif
-  ai-flow open [--base HEAD] [--staged] [--tracked-only]
-  ai-flow check [--include-untracked] [--open] [--no-verify] [--no-diff] [-- <command>]
-  ai-flow init [--force]
-  ai-flow install [--force] [--apply-agent-docs]
-  ai-flow verify [-- <command>]
-  ai-flow diff [--base HEAD] [--staged] [--include-untracked] [--open] [--watch]
-  ai-flow app [--base HEAD] [--staged] [--include-untracked]
-  ai-flow review [--base HEAD] [--staged] [--include-untracked]
-  ai-flow status
-  ai-flow report [--label manual] [--file report.md]
+  dg
+  diffguard open [--base HEAD] [--staged] [--tracked-only]
+  diffguard check [--include-untracked] [--open] [--no-verify] [--no-diff] [-- <command>]
+  diffguard init [--force]
+  diffguard install [--force] [--apply-agent-docs]
+  diffguard verify [-- <command>]
+  diffguard diff [--base HEAD] [--staged] [--include-untracked] [--open] [--watch]
+  diffguard app [--base HEAD] [--staged] [--include-untracked]
+  diffguard review [--base HEAD] [--staged] [--include-untracked]
+  diffguard status
+  diffguard report [--label manual] [--file report.md]
 
 Default loop:
   1. Let an AI agent edit code.
-  2. Run: aif
-  3. Run: ai-flow check --include-untracked
+  2. Run: dg
+  3. Run: diffguard check --include-untracked
   4. Only accept the change when verification evidence is clear.
 
 Diff review keys:
@@ -2995,15 +2995,15 @@ Diff review keys:
 }
 
 function printOpenHelp(): void {
-  console.log(`ai-flow open
+  console.log(`diffguard open
 
-Open the local desktop review app for the current directory. This is the default command behind \`aif\` and \`ai-flow\` with no arguments.
+Open the local desktop review app for the current directory. This is the default command behind \`dg\` and \`diffguard\` with no arguments.
 
-It auto-initializes .ai-flow/ when needed, makes sure .ai-flow/ is ignored in Git worktrees, and includes untracked files by default so new AI-created files are visible.
+It auto-initializes .diffguard/ when needed, makes sure .diffguard/ is ignored in Git worktrees, and includes untracked files by default so new AI-created files are visible.
 
 Usage:
-  aif
-  ai-flow open [--base HEAD] [--staged] [--tracked-only] [--context 12] [--no-watch] [--foreground]
+  dg
+  diffguard open [--base HEAD] [--staged] [--tracked-only] [--context 12] [--no-watch] [--foreground]
 
 Options:
   --tracked-only  inspect tracked changes only
@@ -3011,27 +3011,27 @@ Options:
 }
 
 function printCheckHelp(): void {
-  console.log(`ai-flow check
+  console.log(`diffguard check
 
 Run configured verification and create a reviewable diff artifact.
 
 Usage:
-  ai-flow check [--include-untracked] [--staged] [--base HEAD] [--context 12] [--open] [--no-verify] [--no-diff] [-- <command>]
+  diffguard check [--include-untracked] [--staged] [--base HEAD] [--context 12] [--open] [--no-verify] [--no-diff] [-- <command>]
 
 Examples:
-  ai-flow check --include-untracked --open
-  ai-flow check -- npm test
-  ai-flow check --no-verify --include-untracked
+  diffguard check --include-untracked --open
+  diffguard check -- npm test
+  diffguard check --no-verify --include-untracked
 `);
 }
 
 function printDiffHelp(): void {
-  console.log(`ai-flow diff
+  console.log(`diffguard diff
 
 Generate a browser-based side-by-side Git diff review.
 
 Usage:
-  ai-flow diff [--base HEAD] [--staged] [--include-untracked] [--context 12] [--output review.html] [--open] [--watch] [--port 0]
+  diffguard diff [--base HEAD] [--staged] [--include-untracked] [--context 12] [--output review.html] [--open] [--watch] [--port 0]
 
 Keys in the review page:
   F7         next changed hunk
@@ -3049,17 +3049,17 @@ Use --watch to serve a live review that reloads when the working tree changes.
 }
 
 function printAppHelp(): void {
-  console.log(`ai-flow app
+  console.log(`diffguard app
 
-Launch the local desktop review app. The app reads Git diff and source files directly from this repository, writes a local review file under .ai-flow/, and refreshes when the working tree changes. It does not start an HTTP server.
+Launch the local desktop review app. The app reads Git diff and source files directly from this repository, writes a local review file under .diffguard/, and refreshes when the working tree changes. It does not start an HTTP server.
 
 Usage:
-  ai-flow app [--base HEAD] [--staged] [--include-untracked] [--context 12] [--no-watch] [--foreground]
+  diffguard app [--base HEAD] [--staged] [--include-untracked] [--context 12] [--no-watch] [--foreground]
 
 Aliases:
-  aif
-  ai-flow open
-  ai-flow review
+  dg
+  diffguard open
+  diffguard review
 `);
 }
 

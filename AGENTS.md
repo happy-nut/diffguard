@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository.
 
 ## Project
 
-`ai-flow` is a small TypeScript CLI. Its job is to validate AI-generated code changes by running verification commands, creating diff review artifacts, and preserving compact evidence.
+`diffguard` is a small TypeScript CLI. Its job is to validate AI-generated code changes by running verification commands, creating diff review artifacts, and preserving compact evidence.
 
 It is not an autonomous coding agent or orchestration layer. Keep the core simple, local, and validation-oriented.
 
@@ -20,10 +20,10 @@ npm run smoke
 
 - Runtime code lives in `src/`.
 - The CLI should have no runtime dependencies unless there is a strong validation or review reason.
-- Keep generated validation artifacts under `.ai-flow/`.
+- Keep generated validation artifacts under `.diffguard/`.
 - Prefer plain Markdown and JSON artifacts so users can inspect and edit everything.
 - Do not introduce git worktree, terminal multiplexer, editor, or agent-specific requirements.
-- Treat AI tools as producers of changes; ai-flow is the verifier of those changes.
+- Treat AI tools as producers of changes; diffguard is the verifier of those changes.
 
 ## Quality Bar
 
