@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 
 type AgentName = "manual" | "codex" | "claude";
 type PromptRole = "worker" | "reviewer";
+type SessionRole = "planner" | "worker" | "reviewer";
 
 type FlowConfig = {
   version: 1;
@@ -42,6 +43,8 @@ const CONFIG_FILE = "config.json";
 const STATE_FILE = "state.md";
 const TASKS_FILE = "tasks.md";
 const DECISIONS_FILE = "decisions.md";
+const AGENT_SNIPPET_FILE = "agent-snippet.md";
+const ROLES_DIR = "roles";
 
 function main(): void {
   const [command = "--help", ...args] = process.argv.slice(2);
@@ -50,6 +53,15 @@ function main(): void {
     switch (command) {
       case "init":
         initFlow(args);
+        break;
+      case "install":
+        installFlow(args);
+        break;
+      case "start":
+        startSession(args);
+        break;
+      case "finish":
+        finishSession(args);
         break;
       case "status":
         printStatus();
@@ -86,12 +98,14 @@ function main(): void {
 
 function initFlow(args: string[]): void {
   const force = args.includes("--force");
+  const quiet = args.includes("--quiet");
   const root = process.cwd();
   const flowPath = join(root, FLOW_DIR);
   mkdirSync(flowPath, { recursive: true });
   mkdirSync(join(flowPath, "prompts"), { recursive: true });
   mkdirSync(join(flowPath, "reports"), { recursive: true });
   mkdirSync(join(flowPath, "logs"), { recursive: true });
+  mkdirSync(join(flowPath, ROLES_DIR), { recursive: true });
 
   const config: FlowConfig = {
     version: 1,
@@ -111,8 +125,90 @@ function initFlow(args: string[]): void {
   writeIfMissing(join(flowPath, TASKS_FILE), initialTasks(), force);
   writeIfMissing(join(flowPath, DECISIONS_FILE), initialDecisions(), force);
 
-  console.log(`Initialized ${FLOW_DIR}/ in ${root}`);
-  console.log("Next: edit .ai-flow/tasks.md, then run `ai-flow next --agent codex`.");
+  if (!quiet) {
+    console.log(`Initialized ${FLOW_DIR}/ in ${root}`);
+    console.log("Next: run `ai-flow install --apply-agent-docs` for role-based sessions.");
+  }
+}
+
+function installFlow(args: string[]): void {
+  const force = args.includes("--force");
+  const applyAgentDocs = args.includes("--apply-agent-docs");
+  initFlow([...args, "--quiet"]);
+  writeRoleFiles(force);
+  writeIfMissing(
+    join(process.cwd(), FLOW_DIR, AGENT_SNIPPET_FILE),
+    agentSnippet(),
+    force,
+  );
+  if (applyAgentDocs) {
+    applyAgentDocSnippet("AGENTS.md");
+    applyAgentDocSnippet("CLAUDE.md");
+  }
+
+  console.log("Installed ai-flow role sessions.");
+  console.log(`- ${FLOW_DIR}/${ROLES_DIR}/planner.md`);
+  console.log(`- ${FLOW_DIR}/${ROLES_DIR}/worker.md`);
+  console.log(`- ${FLOW_DIR}/${ROLES_DIR}/reviewer.md`);
+  if (applyAgentDocs) {
+    console.log("- Updated AGENTS.md / CLAUDE.md role trigger snippets where available.");
+  } else {
+    console.log(`Next: add ${FLOW_DIR}/${AGENT_SNIPPET_FILE} to your agent instructions.`);
+  }
+}
+
+function startSession(args: string[]): void {
+  const [roleArg = "planner", ...rest] = args;
+  const role = parseSessionRole(roleArg);
+  if (!existsSync(join(process.cwd(), FLOW_DIR, CONFIG_FILE))) {
+    initFlow(["--quiet"]);
+    writeRoleFiles(false);
+  }
+
+  const agent = parseAgent(readOption(rest, "--agent") ?? loadConfig().defaultAgent);
+  const taskId = readOption(rest, "--task");
+  const save = !rest.includes("--no-save");
+  const brief = role === "planner"
+    ? plannerBrief({ agent })
+    : buildPrompt({ agent, role, taskId, save: false });
+
+  if (save) {
+    const promptPath = join(
+      process.cwd(),
+      FLOW_DIR,
+      "prompts",
+      `${timestampForFile()}-${role}-${agent}.md`,
+    );
+    writeFileSync(promptPath, brief);
+  }
+
+  console.log(brief);
+}
+
+function finishSession(args: string[]): void {
+  const [roleArg = "worker", ...rest] = args;
+  const role = parseSessionRole(roleArg);
+  ensureInitialized();
+  const taskId = readOption(rest, "--task") ?? currentTaskId();
+  const file = readOption(rest, "--file");
+  const complete = rest.includes("--complete");
+  const body = file ? readFileSync(file, "utf8") : readStdin();
+  if (body.trim().length === 0) {
+    throw new Error("No finish report provided. Pass --file or pipe report text on stdin.");
+  }
+
+  const timestamp = timestampForFile();
+  const reportPath = saveReport(role, taskId, body, timestamp);
+  if (complete) {
+    markTaskComplete(taskId);
+  }
+  appendToState(
+    `\n## ${capitalize(role)} Finish ${timestamp} (${taskId})\n\n${summarizeForState(body)}\n`,
+  );
+  console.log(`Recorded ${relative(process.cwd(), reportPath)}`);
+  if (complete) {
+    console.log(`Marked ${taskId} complete.`);
+  }
 }
 
 function printStatus(): void {
@@ -181,18 +277,7 @@ function recordReport(args: string[]): void {
   }
 
   const timestamp = timestampForFile();
-  const reportName = `${timestamp}-${sanitizeFilePart(taskId)}.md`;
-  const reportPath = join(process.cwd(), FLOW_DIR, "reports", reportName);
-  const report = [
-    `# Worker Report: ${taskId}`,
-    "",
-    `Recorded: ${new Date().toISOString()}`,
-    "",
-    body.trim(),
-    "",
-  ].join("\n");
-
-  writeFileSync(reportPath, report);
+  const reportPath = saveReport("worker", taskId, body, timestamp);
   appendToState(`\n## Report ${timestamp} (${taskId})\n\n${summarizeForState(body)}\n`);
   console.log(`Recorded ${relative(process.cwd(), reportPath)}`);
 }
@@ -402,6 +487,203 @@ function reviewerPrompt(input: {
     "Findings first, ordered by severity. Then list test gaps and a short summary.",
     "",
   ].join("\n");
+}
+
+function plannerBrief(input: { agent: AgentName }): string {
+  ensureInitialized();
+  const config = loadConfig();
+  const git = readGitSnapshot(process.cwd());
+  const tasks = parseTasks(readFlowFile(TASKS_FILE));
+  const active = tasks.find((task) => !task.done);
+  const commands = getVerificationCommands(config);
+  const state = readFlowFile(STATE_FILE);
+  const decisions = readFlowFile(DECISIONS_FILE);
+
+  return [
+    "# AI Flow Planner Session",
+    "",
+    "You are the planning and coordination session for this repository. The user should not need to know or run ai-flow commands.",
+    "",
+    "## Mission",
+    "- Read the repo state, durable state, and current task queue.",
+    "- Decide what is already done, what is risky, and what the next small verifiable slice should be.",
+    "- Update `.ai-flow/tasks.md`, `.ai-flow/state.md`, and `.ai-flow/decisions.md` when needed.",
+    "- Produce a Worker-ready brief with scope, success criteria, and verification commands.",
+    "- Do not implement product code unless the user explicitly changes this session into a Worker session.",
+    "",
+    "## Current Repository State",
+    `Project: ${config.projectName}`,
+    `Agent adapter: ${input.agent}`,
+    `Branch: ${git.branch || "(unknown)"}`,
+    `Next task: ${active ? `${active.id} ${active.title}` : "none"}`,
+    "",
+    "### Git Status",
+    codeBlock(truncateText(git.status || "clean", 5000)),
+    "",
+    "### Diff Stat",
+    codeBlock(truncateText(git.diffStat || "no diff", 3500)),
+    "",
+    "## Durable State",
+    truncateMarkdown(state, 2600),
+    "",
+    "## Decisions",
+    truncateMarkdown(decisions, 1600),
+    "",
+    "## Verification Available",
+    commands.length > 0
+      ? commands.map((command) => `- \`${command}\``).join("\n")
+      : "- No root verification detected. Infer scoped validation from the touched subproject.",
+    "",
+    "## Required Planner Output",
+    "- Current state in 3-7 bullets",
+    "- Next Worker slice with a task id",
+    "- Scope boundaries and files/areas to inspect",
+    "- Acceptance criteria",
+    "- Verification commands",
+    "- Any risks or user decisions needed",
+    "",
+    "## Cleanup",
+    "Before ending, write a short planner report and record it with `ai-flow finish planner --file <report-file>`.",
+    "",
+  ].join("\n");
+}
+
+function writeRoleFiles(force: boolean): void {
+  const rolesPath = join(process.cwd(), FLOW_DIR, ROLES_DIR);
+  mkdirSync(rolesPath, { recursive: true });
+  writeIfMissing(join(rolesPath, "planner.md"), plannerRoleDoc(), force);
+  writeIfMissing(join(rolesPath, "worker.md"), workerRoleDoc(), force);
+  writeIfMissing(join(rolesPath, "reviewer.md"), reviewerRoleDoc(), force);
+}
+
+function plannerRoleDoc(): string {
+  return [
+    "# ai-flow Planner Role",
+    "",
+    "When the user says this is a Planner session, run the lifecycle yourself. Do not ask the user to run CLI commands.",
+    "",
+    "## Start",
+    "Run:",
+    "",
+    "```bash",
+    "ai-flow start planner",
+    "```",
+    "",
+    "If `.ai-flow/` is missing, `start` initializes it.",
+    "",
+    "## Work",
+    "- Inspect the current repo state and relevant code.",
+    "- Update `.ai-flow/tasks.md`, `.ai-flow/state.md`, and `.ai-flow/decisions.md` as needed.",
+    "- Keep tasks small, verifiable, and suitable for one Worker session.",
+    "- Define acceptance criteria and validation commands.",
+    "- Do not edit product code unless the user explicitly changes this session into a Worker session.",
+    "",
+    "## Finish",
+    "Write a short report and record it:",
+    "",
+    "```bash",
+    "ai-flow finish planner --file <report-file>",
+    "```",
+    "",
+  ].join("\n");
+}
+
+function workerRoleDoc(): string {
+  return [
+    "# ai-flow Worker Role",
+    "",
+    "When the user says this is a Worker session, run the lifecycle yourself. Do not ask the user to run CLI commands.",
+    "",
+    "## Start",
+    "Run:",
+    "",
+    "```bash",
+    "ai-flow start worker",
+    "```",
+    "",
+    "## Work",
+    "- Complete exactly one task slice.",
+    "- Inspect the code before editing.",
+    "- Keep the diff small and scoped.",
+    "- Run the requested verification plus any subproject-specific checks.",
+    "- Do not claim completion without verification evidence.",
+    "",
+    "## Finish",
+    "Write a report with changed files, verification, completed behavior, and remaining risks. Then run:",
+    "",
+    "```bash",
+    "ai-flow finish worker --task <task-id> --file <report-file> --complete",
+    "```",
+    "",
+    "Omit `--complete` if the task is not actually complete.",
+    "",
+  ].join("\n");
+}
+
+function reviewerRoleDoc(): string {
+  return [
+    "# ai-flow Reviewer Role",
+    "",
+    "When the user says this is a Reviewer session, run the lifecycle yourself. Do not ask the user to run CLI commands.",
+    "",
+    "## Start",
+    "Run:",
+    "",
+    "```bash",
+    "ai-flow start reviewer",
+    "```",
+    "",
+    "## Work",
+    "- Stay read-focused unless the user explicitly asks for fixes.",
+    "- Review the current diff against `.ai-flow/tasks.md`, `.ai-flow/state.md`, and `.ai-flow/decisions.md`.",
+    "- Findings first, ordered by severity.",
+    "- Identify missing tests, scope creep, and risky assumptions.",
+    "",
+    "## Finish",
+    "Write a review report and record it:",
+    "",
+    "```bash",
+    "ai-flow finish reviewer --task <task-id> --file <report-file>",
+    "```",
+    "",
+  ].join("\n");
+}
+
+function agentSnippet(): string {
+  return [
+    "<!-- AI-FLOW:START -->",
+    "## ai-flow Role Sessions",
+    "",
+    "This repository uses ai-flow for role-based AI coding sessions.",
+    "",
+    "When the user says the session is `Planner`, `Worker`, or `Reviewer`, do not ask the user to run ai-flow commands. Run the matching lifecycle yourself:",
+    "",
+    "- Planner: read `.ai-flow/roles/planner.md`, then run `ai-flow start planner`.",
+    "- Worker: read `.ai-flow/roles/worker.md`, then run `ai-flow start worker`.",
+    "- Reviewer: read `.ai-flow/roles/reviewer.md`, then run `ai-flow start reviewer`.",
+    "",
+    "At the end of the session, write a concise report and record it with `ai-flow finish <role> --file <report-file>`. Workers should pass `--complete` only after verification succeeds.",
+    "",
+    "The user-facing contract is role selection and review of results; CLI details are agent-internal.",
+    "<!-- AI-FLOW:END -->",
+    "",
+  ].join("\n");
+}
+
+function applyAgentDocSnippet(fileName: string): void {
+  const path = join(process.cwd(), fileName);
+  const snippet = agentSnippet();
+  if (!existsSync(path)) {
+    writeFileSync(path, `# ${fileName}\n\n${snippet}`);
+    return;
+  }
+
+  const current = readFileSync(path, "utf8");
+  const markerPattern = /<!-- AI-FLOW:START -->[\s\S]*?<!-- AI-FLOW:END -->\n?/;
+  const next = markerPattern.test(current)
+    ? current.replace(markerPattern, snippet)
+    : `${current.trimEnd()}\n\n${snippet}`;
+  writeFileSync(path, next);
 }
 
 function buildLaunch(
@@ -621,6 +903,69 @@ function parseRole(value: string): PromptRole {
   throw new Error(`Unsupported role: ${value}`);
 }
 
+function parseSessionRole(value: string): SessionRole {
+  if (value === "planner" || value === "worker" || value === "reviewer") {
+    return value;
+  }
+  throw new Error(`Unsupported session role: ${value}`);
+}
+
+function currentTaskId(): string {
+  const tasks = parseTasks(readFlowFile(TASKS_FILE));
+  const active = tasks.find((task) => !task.done);
+  if (active) {
+    return active.id;
+  }
+  if (tasks[0]) {
+    return tasks[0].id;
+  }
+  return "unknown-task";
+}
+
+function saveReport(
+  role: SessionRole,
+  taskId: string,
+  body: string,
+  timestamp = timestampForFile(),
+): string {
+  const reportDir = join(process.cwd(), FLOW_DIR, "reports");
+  mkdirSync(reportDir, { recursive: true });
+  const reportPath = join(reportDir, `${timestamp}-${role}-${sanitizeFilePart(taskId)}.md`);
+  const report = [
+    `# ${capitalize(role)} Report: ${taskId}`,
+    "",
+    `Recorded: ${new Date().toISOString()}`,
+    "",
+    body.trim(),
+    "",
+  ].join("\n");
+  writeFileSync(reportPath, report);
+  return reportPath;
+}
+
+function markTaskComplete(taskId: string): void {
+  const tasksPath = join(process.cwd(), FLOW_DIR, TASKS_FILE);
+  const taskPattern = new RegExp(`\\b${escapeRegExp(taskId)}\\b`);
+  const current = readFileSync(tasksPath, "utf8");
+  let changed = false;
+  const next = current
+    .split(/\r?\n/)
+    .map((line) => {
+      if (!changed && taskPattern.test(line) && line.includes("[ ]")) {
+        changed = true;
+        return line.replace("[ ]", "[x]");
+      }
+      return line;
+    })
+    .join("\n");
+
+  if (!changed) {
+    throw new Error(`Could not mark task complete: ${taskId}`);
+  }
+
+  writeFileSync(tasksPath, next);
+}
+
 function listRecentFiles(dir: string, limit: number): string[] {
   if (!existsSync(dir)) {
     return [];
@@ -678,6 +1023,14 @@ function sanitizeFilePart(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "");
 }
 
+function capitalize(value: string): string {
+  return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function shellQuote(value: string): string {
   if (/^[a-zA-Z0-9_./:=+-]+$/.test(value)) {
     return value;
@@ -692,6 +1045,9 @@ Lightweight planning and verification control plane for AI coding agents.
 
 Usage:
   ai-flow init [--force]
+  ai-flow install [--force] [--apply-agent-docs]
+  ai-flow start planner|worker|reviewer [--agent manual|codex|claude] [--task T001] [--no-save]
+  ai-flow finish planner|worker|reviewer [--task T001] [--file report.md] [--complete]
   ai-flow status
   ai-flow next [--agent manual|codex|claude] [--role worker|reviewer] [--task T001] [--no-save]
   ai-flow prompt worker|reviewer [--agent manual|codex|claude] [--task T001] [--no-save]
@@ -700,12 +1056,14 @@ Usage:
   ai-flow run worker|reviewer --agent codex|claude [--task T001] [--dry-run] [--print]
 
 Workflow:
-  1. ai-flow init
-  2. Edit .ai-flow/tasks.md
-  3. ai-flow next --agent codex
-  4. Give the prompt to a worker, or run: ai-flow run worker --agent claude
-  5. ai-flow verify
-  6. ai-flow report --task T001 --file worker-report.md
+  1. ai-flow install --apply-agent-docs
+  2. In any agent session, say: "Use Planner mode" or "Use Worker mode"
+  3. The agent reads .ai-flow/roles/<role>.md and runs start/finish internally
+
+Legacy/manual:
+  ai-flow next --agent codex
+  ai-flow run worker --agent claude
+  ai-flow verify
 `);
 }
 

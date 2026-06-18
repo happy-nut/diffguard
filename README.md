@@ -41,13 +41,38 @@ npm link
 
 ## Quick Start
 
-Inside the repository you want an AI agent to work on:
+Inside the repository you want AI agents to work on, install the role instructions once:
 
 ```bash
-ai-flow init
+ai-flow install --apply-agent-docs
 ```
 
-Edit `.ai-flow/tasks.md`:
+This creates `.ai-flow/` and adds a short role-session snippet to `AGENTS.md` and `CLAUDE.md`.
+
+After that, users do not need to know the CLI. They only choose a session role in the agent chat:
+
+```text
+Use Planner mode. Read the current repo state and tell me the next Worker slice.
+```
+
+```text
+Use Worker mode. Take the current ai-flow task, implement it, verify it, and finish cleanly.
+```
+
+```text
+Use Reviewer mode. Review the current Worker diff against the ai-flow task.
+```
+
+The agent then runs the lifecycle internally:
+
+- start the role session
+- read repo state, tasks, durable decisions, and verification commands
+- do the role-specific work
+- write a report
+- record the finish state
+- mark Worker tasks complete only after verification
+
+Planner sessions maintain `.ai-flow/tasks.md`:
 
 ```markdown
 - [ ] T001: Add empty state rendering for the login form.
@@ -55,28 +80,16 @@ Edit `.ai-flow/tasks.md`:
 - [ ] T003: Add a regression test for failed login loading state.
 ```
 
-Ask the planner for the next worker prompt:
+## Manual Mode
+
+The CLI remains available for people who want direct control or scripting.
 
 ```bash
+ai-flow status
 ai-flow next --agent codex
-```
-
-Or launch a supported agent directly:
-
-```bash
 ai-flow run worker --agent codex
 ai-flow run worker --agent claude
-```
-
-Run verification:
-
-```bash
 ai-flow verify
-```
-
-Record a worker report:
-
-```bash
 ai-flow report --task T001 --file worker-report.md
 ```
 
@@ -87,6 +100,24 @@ ai-flow init [--force]
 ```
 
 Creates `.ai-flow/` with config, state, tasks, decisions, prompts, reports, and logs.
+
+```bash
+ai-flow install [--force] [--apply-agent-docs]
+```
+
+Installs role-session files under `.ai-flow/roles/`. With `--apply-agent-docs`, it also adds the agent-facing trigger snippet to `AGENTS.md` and `CLAUDE.md`.
+
+```bash
+ai-flow start planner|worker|reviewer [--agent manual|codex|claude] [--task T001]
+```
+
+Starts a role session by generating the current role brief from repository state. Agents call this internally after the user chooses a role.
+
+```bash
+ai-flow finish planner|worker|reviewer [--task T001] [--file report.md] [--complete]
+```
+
+Records the role report and appends a compact summary to `.ai-flow/state.md`. Workers pass `--complete` only after the task is verified.
 
 ```bash
 ai-flow status
@@ -158,12 +189,14 @@ ai-flow prompt worker --agent manual
   state.md          durable progress and reports
   tasks.md          small verifiable slices
   decisions.md      project decisions that should survive context resets
+  agent-snippet.md  instructions to paste into agent docs if needed
+  roles/            planner, worker, and reviewer lifecycle protocols
   prompts/          generated worker/reviewer prompts
   reports/          worker reports
   logs/             verification logs
 ```
 
-Commit `config.json`, `state.md`, `tasks.md`, and `decisions.md` if you want the process to travel with the repo. Keep prompts, reports, and logs local unless your team wants those artifacts in version control.
+Commit `config.json`, `state.md`, `tasks.md`, `decisions.md`, `agent-snippet.md`, and `roles/` if you want the process to travel with the repo. Keep prompts, reports, and logs local unless your team wants those artifacts in version control.
 
 ## Design Principles
 
@@ -183,7 +216,6 @@ Planned:
 - configurable prompt templates
 - stricter report parsing
 - machine-readable task state
-- policy checks for write/read-only roles
 - more adapters
 
 ## License
