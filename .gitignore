@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.DS_Store
+.ai-flow/logs/
+.ai-flow/reports/
+.ai-flow/prompts/
+*.log

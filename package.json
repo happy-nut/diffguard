@@ -1,0 +1,45 @@
+{
+  "name": "ai-flow",
+  "version": "0.1.0",
+  "description": "Lightweight planning and verification control plane for AI coding agents.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/happy-nut/ai-flow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/happy-nut/ai-flow/issues"
+  },
+  "homepage": "https://github.com/happy-nut/ai-flow#readme",
+  "bin": {
+    "ai-flow": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "smoke": "npm run build && node dist/cli.js --help"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "codex",
+    "claude",
+    "coding-agent",
+    "workflow",
+    "verification"
+  ],
+  "author": "happy-nut <happynut.dev@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

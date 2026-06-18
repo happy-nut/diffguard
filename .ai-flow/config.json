@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "projectName": "ai-flow",
+  "defaultAgent": "manual",
+  "verification": {
+    "commands": [
+      "npm run build"
+    ]
+  }
+}
