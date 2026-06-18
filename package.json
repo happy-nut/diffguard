@@ -41,5 +41,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "diff2html": "^3.4.56"
   }
 }

@@ -80,11 +80,13 @@ When a Worker records completion, ai-flow automatically creates a visual diff re
 ai-flow diff --watch --cmux
 ```
 
-The generated review page has a folder-tree sidebar and supports IntelliJ-style hunk navigation:
+The generated review page is powered by diff2html, has a folder-tree sidebar, and supports IntelliJ-style navigation:
 
 - `F7`: next changed hunk
 - `Shift+F7`: previous changed hunk
 - `]` / `[`: fallback keys if the browser captures function keys
+- `Shift Shift`: search indexed files, including unchanged files
+- `Cmd/Ctrl+E`: open recent files
 
 Planner sessions maintain `.ai-flow/tasks.md`:
 
@@ -155,7 +157,7 @@ Planner uses this to send a Worker or Reviewer into cmux. It saves the full prom
 ai-flow diff [--base HEAD] [--staged] [--include-untracked] [--open] [--cmux] [--watch]
 ```
 
-Generates a browser-based side-by-side diff review under `.ai-flow/diffs/`. `--cmux` opens it in a cmux browser split. Add `--watch` to serve a live review that reloads when the working tree changes. The sidebar groups changed files as a folder tree, includes search, and has a Files tab for opening indexed source files even when they are unchanged. `F7` / `Shift+F7` move by changed hunk, not by file.
+Generates a browser-based side-by-side diff review under `.ai-flow/diffs/`. `--cmux` opens it in a cmux browser split. Add `--watch` to serve a live review that reloads when the working tree changes. The sidebar groups changed files as a folder tree, includes search, and has a Files tab for opening indexed source files even when they are unchanged. `F7` / `Shift+F7` move by changed hunk, not by file. `Shift Shift` opens file search across changed and unchanged indexed files; `Cmd/Ctrl+E` opens recent files.
 
 ```bash
 ai-flow doctor

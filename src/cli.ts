@@ -13,7 +13,9 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { html as renderDiff2HtmlMarkup } from "diff2html";
 
 type AgentName = "manual" | "codex" | "claude";
 type PromptRole = "worker" | "reviewer";
@@ -124,6 +126,7 @@ const ROLES_DIR = "roles";
 const SOURCE_MAX_FILE_BYTES = 220_000;
 const SOURCE_MAX_TOTAL_BYTES = 5_000_000;
 const SOURCE_MAX_FILES = 1200;
+const nodeRequire = createRequire(import.meta.url);
 
 function main(): void {
   const [command = "--help", ...args] = process.argv.slice(2);
@@ -492,7 +495,7 @@ function renderDiffReview(args: string[]): void {
   console.log(`URL: ${result.url}`);
   console.log(`Files: ${result.files}`);
   console.log(`Hunks: ${result.hunks}`);
-  console.log("Keys: F7 next change, Shift+F7 previous change, [ and ] as fallbacks.");
+  console.log("Keys: F7 next hunk, Shift+F7 previous hunk, Shift Shift search files, Cmd/Ctrl+E recent files.");
 }
 
 function printStatus(): void {
@@ -858,6 +861,7 @@ function plannerBootPrompt(input: {
       ? `- When the first Worker slice is clear and no user decision is needed, immediately run \`ai-flow dispatch worker --agent ${input.agent} --task <task-id>\`; do not ask for confirmation just to create the Worker pane.`
       : "- Auto-dispatch is disabled. Prepare the first Worker slice, then wait for the user.",
     "- For active review while edits may still change, open `ai-flow diff --watch --cmux`; inspect changed hunks with F7 / Shift+F7.",
+    "- In the diff review, use Shift Shift to search all indexed files, including unchanged files. Use Cmd/Ctrl+E for recent files.",
     "- Keep your visible response short: current action, Worker status if dispatched, and any question that genuinely blocks progress.",
     "",
     "## User Objective",
@@ -919,6 +923,7 @@ function plannerRoleDoc(): string {
     "- Define acceptance criteria and validation commands.",
     "- If cmux is available, dispatch Workers and Reviewers with `ai-flow dispatch worker|reviewer --agent codex|claude`; do not make the user create panes manually.",
     "- For live review while edits may still change, open `ai-flow diff --watch --cmux`. Use F7/Shift+F7 to move by changed hunk, not just by file.",
+    "- Use Shift Shift in the diff review to search all indexed files, including unchanged files. Use Cmd/Ctrl+E for recent files.",
     "- Do not edit product code unless the user explicitly changes this session into a Worker session.",
     "",
     "## Finish",
@@ -982,6 +987,7 @@ function reviewerRoleDoc(): string {
     "- Stay read-focused unless the user explicitly asks for fixes.",
     "- Review the current diff against `.ai-flow/tasks.md`, `.ai-flow/state.md`, and `.ai-flow/decisions.md`.",
     "- Prefer `ai-flow diff --watch --cmux` for live visual review. Use F7 for the next changed hunk and Shift+F7 for the previous changed hunk.",
+    "- Use Shift Shift in the diff review to search all indexed files, including unchanged files. Use Cmd/Ctrl+E for recent files.",
     "- Findings first, ordered by severity.",
     "- Identify missing tests, scope creep, and risky assumptions.",
     "",
@@ -1009,7 +1015,7 @@ function agentSnippet(): string {
     "- Reviewer: read `.ai-flow/roles/reviewer.md`, then run `ai-flow start reviewer`.",
     "",
     "The normal user experience is: the user talks only to Planner. Planner uses `.ai-flow/cmux.md` and `ai-flow dispatch worker|reviewer --agent codex|claude` to create separate cmux sessions when available.",
-    "For live review, use `ai-flow diff --watch --cmux`; use F7 for next changed hunk and Shift+F7 for previous changed hunk.",
+    "For live review, use `ai-flow diff --watch --cmux`; use F7 for next changed hunk, Shift+F7 for previous changed hunk, Shift Shift for file search, and Cmd/Ctrl+E for recent files.",
     "",
     "At the end of the session, write a concise report and record it with `ai-flow finish <role> --file <report-file>`. Workers should pass `--complete` only after verification succeeds.",
     "",
@@ -1047,6 +1053,7 @@ function cmuxGuide(): string {
     "- Dispatch should create or use helper terminal space without requiring the user to manage panes.",
     "- Use `ai-flow diff --watch --cmux` for a live review pane while edits may still change.",
     "- Navigate changed hunks with F7 / Shift+F7. The sidebar groups files as a folder tree.",
+    "- Use Shift Shift in the diff review to search all indexed files, including unchanged files. Use Cmd/Ctrl+E for recent files.",
     "- If cmux is missing, run `ai-flow doctor` and explain the one missing setup step in plain language.",
     "",
     "## Completion Contract",
@@ -1500,6 +1507,7 @@ function buildDiffReview(input: {
   const sourceFiles = collectSourceFiles(files);
   const hunks = files.reduce((sum, file) => sum + file.hunks.length, 0);
   const generatedAt = new Date().toISOString();
+  const diffHtml = renderDiff2Html(diffText);
   const signature = createHash("sha1")
     .update(diffText)
     .update("\n")
@@ -1507,6 +1515,7 @@ function buildDiffReview(input: {
     .digest("hex");
   const html = renderDiffHtml({
     files,
+    diffHtml,
     sourceFiles,
     title: input.title,
     subtitle: diffSubtitle(input),
@@ -1522,6 +1531,18 @@ function buildDiffReview(input: {
     signature,
     generatedAt,
   };
+}
+
+function renderDiff2Html(diffText: string): string {
+  if (diffText.trim().length === 0) {
+    return "";
+  }
+
+  return renderDiff2HtmlMarkup(diffText, {
+    outputFormat: "side-by-side",
+    drawFileList: false,
+    matching: "lines",
+  });
 }
 
 function createDiffReview(input: {
@@ -1669,6 +1690,7 @@ function openDiffReviewAfterWorker(taskId: string): void {
 
 function renderDiffHtml(input: {
   files: DiffFile[];
+  diffHtml: string;
   sourceFiles: SourceFile[];
   title: string;
   subtitle: string;
@@ -1685,19 +1707,6 @@ function renderDiffHtml(input: {
   const sourceNav = renderSourceTree(input.sourceFiles);
   const embeddedFiles = input.sourceFiles.filter((file) => file.embedded).length;
 
-  let hunkIndex = 0;
-  const files = input.files.map((file, fileIndex) => {
-    const hunks = file.binary
-      ? `<div class="binary">Binary file changed.</div>`
-      : file.hunks.map((hunk) => renderHunk(file, hunk, hunkIndex++)).join("\n");
-    return [
-      `<section class="file" id="file-${fileIndex}">`,
-      `<header class="file-header"><span class="status status-${escapeAttr(file.status)}">${escapeHtml(file.status)}</span><h2>${escapeHtml(file.displayPath)}</h2></header>`,
-      hunks,
-      "</section>",
-    ].join("\n");
-  }).join("\n");
-
   return [
     "<!doctype html>",
     '<html lang="en">',
@@ -1707,6 +1716,7 @@ function renderDiffHtml(input: {
     '<link rel="icon" href="data:,">',
     `<title>${escapeHtml(input.title)}</title>`,
     "<style>",
+    diff2HtmlCss(),
     diffCss(),
     "</style>",
     "</head>",
@@ -1717,7 +1727,7 @@ function renderDiffHtml(input: {
     `<div class="live-status ${input.watch ? "watching" : ""}" id="live-status">${input.watch ? "Live: watching for changes" : `Generated: ${escapeHtml(input.generatedAt ?? new Date().toISOString())}`}</div>`,
     '<label class="search"><span>Search</span><input id="review-search" type="search" placeholder="Path or file content"></label>',
     '<div class="tabs"><button type="button" class="tab active" data-tab="changes">Changes</button><button type="button" class="tab" data-tab="files">Files</button></div>',
-    '<div class="keymap"><kbd>F7</kbd> next hunk<br><kbd>Shift</kbd>+<kbd>F7</kbd> previous<br><kbd>]</kbd>/<kbd>[</kbd> fallback</div>',
+    '<div class="keymap"><kbd>F7</kbd> next hunk<br><kbd>Shift</kbd>+<kbd>F7</kbd> previous<br><kbd>Shift</kbd><kbd>Shift</kbd> search files<br><kbd>Cmd</kbd>+<kbd>E</kbd> recent files</div>',
     `<div class="tab-panel" id="changes-panel">${fileNav}</div>`,
     `<div class="tab-panel hidden" id="files-panel">${sourceNav}</div>`,
     "</aside>",
@@ -1727,7 +1737,7 @@ function renderDiffHtml(input: {
     `<div><h1>${escapeHtml(input.title)}</h1><p>${escapeHtml(input.subtitle)}; ${escapeHtml(String(totalLines))} diff lines</p></div>`,
     `<div class="counter"><span id="hunk-counter">0</span> / ${totalHunks}</div>`,
     "</div>",
-    files || '<div class="empty">No diff to review.</div>',
+    `<div id="diff2html-container" class="diff2html-container">${input.diffHtml || '<div class="empty">No diff to review.</div>'}</div>`,
     "</section>",
     '<section id="source-viewer" class="source-viewer hidden">',
     '<div class="toolbar source-toolbar">',
@@ -1737,6 +1747,13 @@ function renderDiffHtml(input: {
     '<div id="source-body" class="source-body empty">Select a file from the Files tab.</div>',
     "</section>",
     "</main>",
+    '<div id="quick-open" class="quick-open hidden" role="dialog" aria-modal="true" aria-label="Quick open">',
+    '<div class="quick-open-panel">',
+    '<div class="quick-open-title"><span id="quick-open-mode">Search files</span><span class="quick-open-hint">Up Down Enter Esc</span></div>',
+    '<input id="quick-open-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search files">',
+    '<div id="quick-open-results" class="quick-open-results"></div>',
+    "</div>",
+    "</div>",
     `<script type="application/json" id="review-meta" data-watch="${input.watch ? "true" : "false"}" data-signature="${escapeAttr(input.signature ?? "")}" data-generated-at="${escapeAttr(input.generatedAt ?? "")}">{}</script>`,
     `<script type="application/json" id="source-files-data">${jsonForScript(input.sourceFiles)}</script>`,
     "<script>",
@@ -1744,50 +1761,6 @@ function renderDiffHtml(input: {
     "</script>",
     "</body>",
     "</html>",
-  ].join("\n");
-}
-
-function renderHunk(file: DiffFile, hunk: DiffHunk, index: number): string {
-  const language = languageForPath(file.displayPath);
-  const rows = hunk.lines.map((line) => {
-    const oldNumber = line.oldLine ? String(line.oldLine) : "";
-    const newNumber = line.newLine ? String(line.newLine) : "";
-    const code = highlightCodeLine(line.text, language);
-    if (line.kind === "add") {
-      return [
-        '<tr class="line add">',
-        '<td class="num old"></td><td class="code old-code"></td>',
-        `<td class="num new">${escapeHtml(newNumber)}</td><td class="code new-code"><span class="marker">+</span>${code}</td>`,
-        "</tr>",
-      ].join("");
-    }
-    if (line.kind === "delete") {
-      return [
-        '<tr class="line delete">',
-        `<td class="num old">${escapeHtml(oldNumber)}</td><td class="code old-code"><span class="marker">-</span>${code}</td>`,
-        '<td class="num new"></td><td class="code new-code"></td>',
-        "</tr>",
-      ].join("");
-    }
-    return [
-      '<tr class="line context">',
-      `<td class="num old">${escapeHtml(oldNumber)}</td><td class="code old-code">${code}</td>`,
-      `<td class="num new">${escapeHtml(newNumber)}</td><td class="code new-code">${code}</td>`,
-      "</tr>",
-    ].join("");
-  }).join("\n");
-
-  const title = hunk.title ? ` · ${hunk.title}` : "";
-  return [
-    `<section class="hunk" id="hunk-${index}" data-hunk-index="${index}" data-file="${escapeAttr(file.displayPath)}">`,
-    '<div class="hunk-header">',
-    `<span class="hunk-index">#${index + 1}</span>`,
-    `<span>${escapeHtml(hunk.header)}${escapeHtml(title)}</span>`,
-    "</div>",
-    '<table class="diff-table"><tbody>',
-    rows,
-    "</tbody></table>",
-    "</section>",
   ].join("\n");
 }
 
@@ -1942,6 +1915,14 @@ function renderSourceNode(node: SourceTreeNode, depth: number): string {
   ].join("\n");
 }
 
+function diff2HtmlCss(): string {
+  try {
+    return readFileSync(nodeRequire.resolve("diff2html/bundles/css/diff2html.min.css"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
 function diffCss(): string {
   return `
 :root {
@@ -1964,6 +1945,20 @@ function diffCss(): string {
   --token-number: #0550ae;
   --token-literal: #8250df;
   --token-tag: #116329;
+  --d2h-bg-color: var(--panel);
+  --d2h-border-color: var(--border);
+  --d2h-dim-color: var(--muted);
+  --d2h-line-border-color: var(--border);
+  --d2h-file-header-bg-color: var(--line);
+  --d2h-file-header-border-color: var(--border);
+  --d2h-empty-placeholder-bg-color: var(--line);
+  --d2h-code-line-bg-color: var(--panel);
+  --d2h-code-line-color: var(--text);
+  --d2h-code-side-line-border-color: var(--border);
+  --d2h-del-bg-color: var(--del);
+  --d2h-ins-bg-color: var(--add);
+  --d2h-info-bg-color: var(--line);
+  --d2h-info-color: var(--muted);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -2062,6 +2057,106 @@ kbd {
   font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--text);
   background: var(--bg);
+}
+.diff2html-container {
+  min-width: 0;
+}
+.d2h-wrapper {
+  background: transparent;
+  color: var(--text);
+}
+.d2h-file-wrapper {
+  margin: 0 0 28px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.d2h-file-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--line);
+  color: var(--text);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.d2h-file-name {
+  color: var(--text);
+}
+.d2h-icon {
+  fill: var(--muted);
+}
+.d2h-tag {
+  border-color: var(--border);
+}
+.d2h-files-diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.d2h-file-side-diff {
+  min-width: 0;
+  overflow-x: auto;
+}
+.d2h-file-side-diff:first-child {
+  border-right: 1px solid var(--border);
+}
+.d2h-code-wrapper {
+  width: 100%;
+}
+.d2h-diff-table {
+  width: 100%;
+  table-layout: fixed;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.d2h-diff-table td {
+  line-height: 1.45;
+}
+.d2h-code-side-linenumber,
+.d2h-code-linenumber {
+  width: 58px;
+  color: var(--muted);
+  background: var(--line);
+  border-color: var(--border);
+}
+.d2h-code-side-line,
+.d2h-code-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.d2h-info {
+  background: var(--line);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.d2h-del {
+  background: var(--del);
+}
+.d2h-ins {
+  background: var(--add);
+}
+.d2h-del .d2h-change {
+  background: var(--del-strong);
+}
+.d2h-ins .d2h-change {
+  background: var(--add-strong);
+}
+.d2h-code-side-linenumber.d2h-del,
+.d2h-code-linenumber.d2h-del {
+  background: var(--del);
+}
+.d2h-code-side-linenumber.d2h-ins,
+.d2h-code-linenumber.d2h-ins {
+  background: var(--add);
+}
+.d2h-diff-table tr.hunk,
+.d2h-diff-table tr.hunk-peer {
+  scroll-margin-top: 76px;
+}
+.d2h-diff-table tr.hunk.active td,
+.d2h-diff-table tr.hunk-peer.active td {
+  box-shadow: inset 0 0 0 2px var(--active);
+}
+.d2h-file-collapse {
+  display: none;
 }
 .tree {
   display: grid;
@@ -2267,18 +2362,116 @@ h1 { margin: 0; font-size: 18px; }
 .source-code {
   padding: 2px 10px;
 }
+.quick-open {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: start center;
+  padding-top: min(12vh, 96px);
+  background: color-mix(in srgb, #000 24%, transparent);
+}
+.quick-open-panel {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 64px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.quick-open-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+.quick-open-hint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#quick-open-input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  outline: 0;
+  padding: 13px 14px;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.quick-open-results {
+  overflow: auto;
+  padding: 6px;
+}
+.quick-open-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.quick-open-item.active,
+.quick-open-item:hover {
+  background: var(--bg);
+  border-color: var(--active);
+}
+.quick-open-main {
+  min-width: 0;
+}
+.quick-open-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.quick-open-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.quick-open-badge {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.quick-open-empty {
+  padding: 28px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
 @media (max-width: 900px) {
   body { grid-template-columns: 1fr; }
   .sidebar { position: relative; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .content { padding: 16px; }
   .toolbar { margin: -16px -16px 16px; padding: 12px 16px; }
+  .d2h-files-diff { grid-template-columns: 1fr; }
+  .d2h-file-side-diff:first-child { border-right: 0; border-bottom: 1px solid var(--border); }
 }
 `;
 }
 
 function diffScript(): string {
   return String.raw`
+prepareDiff2HtmlHunks();
 const hunks = Array.from(document.querySelectorAll('.hunk'));
+const hunkPeers = Array.from(document.querySelectorAll('.hunk-peer'));
 const links = Array.from(document.querySelectorAll('#changes-panel .file-link'));
 const sourceLinks = Array.from(document.querySelectorAll('.source-link'));
 const sourceFiles = JSON.parse(document.getElementById('source-files-data')?.textContent || '[]');
@@ -2288,19 +2481,57 @@ const reviewMeta = document.getElementById('review-meta');
 const watchEnabled = reviewMeta?.dataset.watch === 'true';
 const currentSignature = reviewMeta?.dataset.signature || '';
 const uiStateKey = 'ai-flow-diff-ui:' + location.pathname;
+const recentKey = 'ai-flow-diff-recent:' + location.pathname;
+const quickOpen = document.getElementById('quick-open');
+const quickInput = document.getElementById('quick-open-input');
+const quickResults = document.getElementById('quick-open-results');
+const quickModeLabel = document.getElementById('quick-open-mode');
 let current = -1;
 let checkingForUpdates = false;
+let lastShiftAt = 0;
+let quickMode = 'all';
+let quickItems = [];
+let quickActive = 0;
+
+function prepareDiff2HtmlHunks() {
+  const wrappers = Array.from(document.querySelectorAll('.d2h-file-wrapper'));
+  let globalHunkIndex = 0;
+  wrappers.forEach((wrapper, fileIndex) => {
+    wrapper.id = 'file-' + fileIndex;
+    const fileName = wrapper.querySelector('.d2h-file-name')?.textContent?.trim() || '';
+    const headerToIndex = new Map();
+    const rows = Array.from(wrapper.querySelectorAll('tr'));
+    rows.forEach((row) => {
+      const header = row.textContent.trim();
+      if (!header.startsWith('@@')) return;
+      let index = headerToIndex.get(header);
+      if (index === undefined) {
+        index = globalHunkIndex;
+        headerToIndex.set(header, index);
+        row.classList.add('hunk');
+        row.id = 'hunk-' + index;
+        globalHunkIndex += 1;
+      } else {
+        row.classList.add('hunk-peer');
+      }
+      row.dataset.hunkIndex = String(index);
+      row.dataset.file = fileName;
+    });
+  });
+}
 
 function setActive(index, shouldScroll = true) {
   if (hunks.length === 0) return;
   showDiffView(false);
   current = ((index % hunks.length) + hunks.length) % hunks.length;
   hunks.forEach((hunk, i) => hunk.classList.toggle('active', i === current));
+  hunkPeers.forEach((hunk) => hunk.classList.toggle('active', Number(hunk.dataset.hunkIndex) === current));
   const active = hunks[current];
   const file = active.dataset.file;
   links.forEach((link) => link.classList.toggle('active', link.dataset.file === file));
   document.getElementById('hunk-counter').textContent = String(current + 1);
   if (shouldScroll) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (file) rememberRecent(file, 'change');
   history.replaceState(null, '', '#hunk-' + current);
 }
 
@@ -2308,7 +2539,205 @@ function next(delta) {
   setActive(current < 0 ? 0 : current + delta);
 }
 
+function openQuickOpen(mode) {
+  if (!quickOpen || !quickInput || !quickModeLabel) return;
+  quickMode = mode;
+  quickModeLabel.textContent = mode === 'recent' ? 'Recent files' : 'Search files';
+  quickOpen.classList.remove('hidden');
+  quickInput.value = '';
+  renderQuickOpenResults();
+  setTimeout(() => quickInput.focus(), 0);
+}
+
+function closeQuickOpen() {
+  quickOpen?.classList.add('hidden');
+}
+
+function handleQuickOpenKey(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeQuickOpen();
+    return true;
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    quickActive = Math.min(quickActive + 1, Math.max(quickItems.length - 1, 0));
+    updateQuickActive();
+    return true;
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    quickActive = Math.max(quickActive - 1, 0);
+    updateQuickActive();
+    return true;
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    openQuickItem(quickItems[quickActive]);
+    return true;
+  }
+  return false;
+}
+
+function renderQuickOpenResults() {
+  if (!quickResults) return;
+  const query = quickInput?.value.trim().toLowerCase() || '';
+  const candidates = quickMode === 'recent' && query.length === 0
+    ? recentItems()
+    : allQuickItems();
+  quickItems = candidates
+    .filter((item) => quickMode !== 'recent' || query.length > 0 || item.recent)
+    .filter((item) => {
+      if (query.length === 0) return true;
+      return (item.path + '\n' + item.name + '\n' + item.detail).toLowerCase().includes(query);
+    })
+    .sort((a, b) => scoreQuickItem(a, query) - scoreQuickItem(b, query) || a.path.localeCompare(b.path))
+    .slice(0, 80);
+  quickActive = Math.min(quickActive, Math.max(quickItems.length - 1, 0));
+  if (quickItems.length === 0) {
+    quickResults.innerHTML = '<div class="quick-open-empty">No files found.</div>';
+    return;
+  }
+  quickResults.innerHTML = quickItems.map((item, index) => [
+    '<button type="button" class="quick-open-item' + (index === quickActive ? ' active' : '') + '" data-index="' + index + '">',
+    '<span class="quick-open-main">',
+    '<span class="quick-open-name">' + escapeHtml(item.name) + '</span>',
+    '<span class="quick-open-path">' + escapeHtml(item.path) + '</span>',
+    '</span>',
+    '<span class="quick-open-badge">' + escapeHtml(item.detail) + '</span>',
+    '</button>',
+  ].join('')).join('');
+}
+
+function updateQuickActive() {
+  quickResults?.querySelectorAll('.quick-open-item').forEach((element, index) => {
+    const active = index === quickActive;
+    element.classList.toggle('active', active);
+    if (active) element.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function openQuickItem(item) {
+  if (!item) return;
+  closeQuickOpen();
+  rememberRecent(item.path, item.kind);
+  if (item.kind === 'source' && sourceByPath.has(item.path)) {
+    openSourceFile(item.path);
+    return;
+  }
+  const link = links.find((candidate) => candidate.dataset.file === item.path);
+  if (!link) return;
+  const target = Number(link.dataset.hunk);
+  if (!Number.isNaN(target) && target >= 0 && target < hunks.length) {
+    setActive(target);
+  } else {
+    showDiffView(false);
+    const targetId = link.getAttribute('href')?.slice(1);
+    if (targetId) document.getElementById(targetId)?.scrollIntoView({ block: 'center' });
+  }
+}
+
+function allQuickItems() {
+  const items = sourceFiles.map((file) => ({
+    path: file.path,
+    name: baseName(file.path),
+    detail: [file.changed ? 'changed' : 'file', file.language || 'text'].join(' - '),
+    kind: 'source',
+    recent: false,
+  }));
+  links.forEach((link) => {
+    const path = link.dataset.file || '';
+    if (!path || sourceByPath.has(path)) return;
+    items.push({
+      path,
+      name: baseName(path),
+      detail: 'diff',
+      kind: 'change',
+      recent: false,
+    });
+  });
+  const recent = loadRecent();
+  const recentRank = new Map(recent.map((item, index) => [item.path, index]));
+  return items.map((item) => ({
+    ...item,
+    recent: recentRank.has(item.path),
+    recentRank: recentRank.get(item.path) ?? 9999,
+  }));
+}
+
+function recentItems() {
+  const all = allQuickItems();
+  const byPath = new Map(all.map((item) => [item.path, item]));
+  return loadRecent()
+    .map((item) => byPath.get(item.path) || {
+      path: item.path,
+      name: baseName(item.path),
+      detail: item.kind === 'change' ? 'diff' : 'file',
+      kind: item.kind,
+      recent: true,
+      recentRank: 0,
+    })
+    .map((item, index) => ({ ...item, recent: true, recentRank: index }));
+}
+
+function scoreQuickItem(item, query) {
+  let score = item.recentRank ?? 9999;
+  if (!query) return score;
+  const path = item.path.toLowerCase();
+  const name = item.name.toLowerCase();
+  if (name === query) score -= 3000;
+  else if (name.startsWith(query)) score -= 2000;
+  else if (path.includes('/' + query)) score -= 1000;
+  else if (path.includes(query)) score -= 500;
+  if (item.recent) score -= 100;
+  return score;
+}
+
+function loadRecent() {
+  try {
+    const value = JSON.parse(localStorage.getItem(recentKey) || '[]');
+    return Array.isArray(value) ? value.filter((item) => item && typeof item.path === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberRecent(path, kind) {
+  if (!path) return;
+  const next = [{ path, kind }, ...loadRecent().filter((item) => item.path !== path)].slice(0, 30);
+  try {
+    localStorage.setItem(recentKey, JSON.stringify(next));
+  } catch {
+    // Recent files are a convenience; ignore storage failures.
+  }
+}
+
+function baseName(path) {
+  return String(path).split('/').filter(Boolean).pop() || String(path);
+}
+
 document.addEventListener('keydown', (event) => {
+  if (!quickOpen?.classList.contains('hidden')) {
+    if (handleQuickOpenKey(event)) return;
+  }
+
+  if (event.key === 'Shift' && !event.repeat) {
+    const now = performance.now();
+    if (now - lastShiftAt < 1000) {
+      event.preventDefault();
+      lastShiftAt = 0;
+      openQuickOpen('all');
+      return;
+    }
+    lastShiftAt = now;
+  }
+
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'e') {
+    event.preventDefault();
+    openQuickOpen('recent');
+    return;
+  }
+
   if (event.key === 'F7') {
     event.preventDefault();
     next(event.shiftKey ? -1 : 1);
@@ -2319,6 +2748,23 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     next(-1);
   }
+});
+
+quickInput?.addEventListener('input', () => renderQuickOpenResults());
+quickResults?.addEventListener('mousemove', (event) => {
+  const item = event.target.closest?.('.quick-open-item');
+  if (!item) return;
+  quickActive = Number(item.dataset.index || 0);
+  updateQuickActive();
+});
+quickResults?.addEventListener('click', (event) => {
+  const item = event.target.closest?.('.quick-open-item');
+  if (!item) return;
+  const index = Number(item.dataset.index || 0);
+  openQuickItem(quickItems[index]);
+});
+quickOpen?.addEventListener('click', (event) => {
+  if (event.target === quickOpen) closeQuickOpen();
 });
 
 links.forEach((link) => {
@@ -2470,6 +2916,7 @@ function updateTreeVisibility(root, query) {
 function openSourceFile(path, shouldSwitch = true) {
   const file = sourceByPath.get(path);
   if (!file) return;
+  rememberRecent(path, 'source');
   document.getElementById('source-viewer').dataset.openPath = path;
   sourceLinks.forEach((link) => link.classList.toggle('active', link.dataset.sourceFile === path));
   document.getElementById('source-title').textContent = path;
@@ -2833,93 +3280,6 @@ function languageForPath(path: string): string {
   if (lower.endsWith(".toml")) return "toml";
   if (lower.endsWith(".sql")) return "sql";
   return "text";
-}
-
-function highlightCodeLine(text: string, language: string): string {
-  if (language === "text") {
-    return escapeHtml(text);
-  }
-  if (language === "markup") {
-    return escapeHtml(text).replace(/(&lt;\/?)([\w:-]+)([^&]*?)(\/?&gt;)/g, "$1<span class=\"tok-tag\">$2</span>$3$4");
-  }
-  if (language === "markdown") {
-    const escaped = escapeHtml(text);
-    if (/^\s{0,3}#{1,6}\s/.test(text)) {
-      return `<span class="tok-keyword">${escaped}</span>`;
-    }
-    return escaped.replace(/(`[^`]+`)/g, '<span class="tok-string">$1</span>');
-  }
-
-  const keywords = new Set([
-    "as", "async", "await", "break", "case", "catch", "class", "const", "continue", "def", "default",
-    "defer", "do", "else", "enum", "export", "extends", "final", "finally", "fn", "for", "from", "func",
-    "function", "go", "if", "impl", "import", "in", "interface", "let", "match", "module", "new", "package",
-    "private", "protected", "public", "return", "select", "static", "struct", "switch", "throw", "try", "type",
-    "val", "var", "while", "yield",
-  ]);
-  const literals = new Set(["False", "None", "True", "false", "nil", "null", "self", "this", "true", "undefined"]);
-  const commentPrefixes = language === "python" || language === "ruby" || language === "shell" || language === "yaml" || language === "toml"
-    ? ["#"]
-    : ["//"];
-
-  let output = "";
-  let index = 0;
-  while (index < text.length) {
-    const rest = text.slice(index);
-    const commentPrefix = commentPrefixes.find((prefix) => rest.startsWith(prefix));
-    if (commentPrefix) {
-      output += `<span class="tok-comment">${escapeHtml(rest)}</span>`;
-      break;
-    }
-
-    const char = text[index];
-    if (char === "\"" || char === "'" || char === "`") {
-      const quote = char;
-      let end = index + 1;
-      let escaped = false;
-      while (end < text.length) {
-        const current = text[end];
-        if (current === quote && !escaped) {
-          end += 1;
-          break;
-        }
-        escaped = current === "\\" && !escaped;
-        if (current !== "\\") {
-          escaped = false;
-        }
-        end += 1;
-      }
-      output += `<span class="tok-string">${escapeHtml(text.slice(index, end))}</span>`;
-      index = end;
-      continue;
-    }
-
-    const number = rest.match(/^\b\d+(?:\.\d+)?\b/);
-    if (number) {
-      output += `<span class="tok-number">${escapeHtml(number[0])}</span>`;
-      index += number[0].length;
-      continue;
-    }
-
-    const identifier = rest.match(/^[A-Za-z_$][\w$-]*/);
-    if (identifier) {
-      const value = identifier[0];
-      if (keywords.has(value)) {
-        output += `<span class="tok-keyword">${escapeHtml(value)}</span>`;
-      } else if (literals.has(value)) {
-        output += `<span class="tok-literal">${escapeHtml(value)}</span>`;
-      } else {
-        output += escapeHtml(value);
-      }
-      index += value.length;
-      continue;
-    }
-
-    output += escapeHtml(char);
-    index += 1;
-  }
-
-  return output;
 }
 
 function isLikelyBinary(path: string): boolean {
@@ -3336,7 +3696,7 @@ Workflow:
   1. Run: ai-flow go
   2. Planner opens in cmux when available, or in the current terminal as fallback
   3. Planner dispatches Worker/Reviewer sessions with cmux when needed
-  4. Worker finish opens a folder-tree diff review automatically; use F7 / Shift+F7 to move by hunk
+  4. Worker finish opens a folder-tree diff review automatically; use F7 / Shift+F7 to move by hunk, Shift Shift to search files, and Cmd/Ctrl+E for recent files
 
 For people who do not know cmux:
   ai-flow go
@@ -3360,6 +3720,8 @@ Keys in the review page:
   F7         next changed hunk
   Shift+F7  previous changed hunk
   ] / [     fallback hunk navigation
+  Shift Shift search indexed files, including unchanged files
+  Cmd/Ctrl+E recent files
 
 The sidebar groups changed files as a folder tree. Use Search to filter paths and indexed file contents.
 The Files tab opens source previews, including unchanged files when they fit the local review budget.
