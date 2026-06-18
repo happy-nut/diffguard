@@ -44,6 +44,7 @@ const STATE_FILE = "state.md";
 const TASKS_FILE = "tasks.md";
 const DECISIONS_FILE = "decisions.md";
 const AGENT_SNIPPET_FILE = "agent-snippet.md";
+const CMUX_FILE = "cmux.md";
 const ROLES_DIR = "roles";
 
 function main(): void {
@@ -62,6 +63,12 @@ function main(): void {
         break;
       case "finish":
         finishSession(args);
+        break;
+      case "dispatch":
+        dispatchSession(args);
+        break;
+      case "doctor":
+        printDoctor();
         break;
       case "status":
         printStatus();
@@ -134,8 +141,9 @@ function initFlow(args: string[]): void {
 function installFlow(args: string[]): void {
   const force = args.includes("--force");
   const applyAgentDocs = args.includes("--apply-agent-docs");
-  initFlow([...args, "--quiet"]);
+  initFlow(["--quiet"]);
   writeRoleFiles(force);
+  writeIfMissing(join(process.cwd(), FLOW_DIR, CMUX_FILE), cmuxGuide(), force);
   writeIfMissing(
     join(process.cwd(), FLOW_DIR, AGENT_SNIPPET_FILE),
     agentSnippet(),
@@ -150,6 +158,7 @@ function installFlow(args: string[]): void {
   console.log(`- ${FLOW_DIR}/${ROLES_DIR}/planner.md`);
   console.log(`- ${FLOW_DIR}/${ROLES_DIR}/worker.md`);
   console.log(`- ${FLOW_DIR}/${ROLES_DIR}/reviewer.md`);
+  console.log(`- ${FLOW_DIR}/${CMUX_FILE}`);
   if (applyAgentDocs) {
     console.log("- Updated AGENTS.md / CLAUDE.md role trigger snippets where available.");
   } else {
@@ -208,6 +217,71 @@ function finishSession(args: string[]): void {
   console.log(`Recorded ${relative(process.cwd(), reportPath)}`);
   if (complete) {
     console.log(`Marked ${taskId} complete.`);
+  }
+}
+
+function dispatchSession(args: string[]): void {
+  ensureInitialized();
+  const [roleArg = "worker", ...rest] = args;
+  const role = parseRole(roleArg);
+  const agent = parseAgent(readOption(rest, "--agent") ?? loadConfig().defaultAgent);
+  if (agent === "manual") {
+    throw new Error("Use --agent codex or --agent claude with dispatch.");
+  }
+
+  const taskId = readOption(rest, "--task");
+  const dryRun = rest.includes("--dry-run");
+  const noCmux = rest.includes("--no-cmux");
+  const tasks = parseTasks(readFlowFile(TASKS_FILE));
+  const task = selectTask(tasks, taskId);
+  const prompt = buildPrompt({ agent, role, taskId: task.id, save: false });
+  const promptPath = savePrompt(role, task.id, agent, prompt);
+  const launchCommand = buildAgentReadPromptCommand(agent, role, promptPath);
+
+  if (dryRun || noCmux) {
+    console.log(`# ai-flow dispatch ${role} (${task.id})`);
+    console.log("");
+    console.log(`Prompt: ${relative(process.cwd(), promptPath)}`);
+    console.log("");
+    console.log("## Agent command");
+    console.log(codeBlock(launchCommand));
+    console.log("");
+    console.log("## cmux behavior");
+    console.log("When cmux is available, ai-flow creates a right-side terminal pane and sends that command there.");
+    return;
+  }
+
+  const result = dispatchToCmux(launchCommand, role, task.id);
+  appendToState(
+    `\n## Dispatch ${timestampForFile()} (${task.id})\n\n- Role: ${role}\n- Agent: ${agent}\n- Prompt: ${relative(process.cwd(), promptPath)}\n- cmux workspace: ${result.workspace}\n- cmux surface: ${result.surface}\n`,
+  );
+  console.log(`Dispatched ${role} ${task.id} to cmux ${result.surface}.`);
+  console.log(`Prompt: ${relative(process.cwd(), promptPath)}`);
+}
+
+function printDoctor(): void {
+  const cmux = commandExists("cmux");
+  const codex = commandExists("codex");
+  const claude = commandExists("claude");
+  const inCmux = Boolean(process.env.CMUX_WORKSPACE_ID || process.env.CMUX_SURFACE_ID);
+
+  console.log("# ai-flow doctor");
+  console.log("");
+  console.log(`cmux: ${cmux ? "found" : "missing"}`);
+  console.log(`inside cmux workspace: ${inCmux ? "yes" : "no"}`);
+  console.log(`codex CLI: ${codex ? "found" : "missing"}`);
+  console.log(`claude CLI: ${claude ? "found" : "missing"}`);
+  console.log("");
+
+  if (!cmux) {
+    console.log("Next: install cmux from https://cmux.com/ or with Homebrew:");
+    console.log(codeBlock("brew tap manaflow-ai/cmux\nbrew install --cask cmux"));
+  } else if (!inCmux) {
+    console.log("Next: open this repository in cmux, start one Planner agent session there, then tell it what you want built.");
+  } else if (!codex && !claude) {
+    console.log("Next: install either Codex CLI or Claude Code so Planner can dispatch Worker sessions.");
+  } else {
+    console.log("Ready: tell the current agent to use Planner mode. The Planner can dispatch Worker/Reviewer sessions for you.");
   }
 }
 
@@ -373,13 +447,7 @@ function buildPrompt(options: {
       : workerPrompt({ config, git, task, commands, state, decisions, agent: options.agent });
 
   if (options.save) {
-    const promptPath = join(
-      root,
-      FLOW_DIR,
-      "prompts",
-      `${timestampForFile()}-${task.id}-${options.role}-${options.agent}.md`,
-    );
-    writeFileSync(promptPath, prompt);
+    savePrompt(options.role, task.id, options.agent, prompt);
   }
 
   return prompt;
@@ -509,6 +577,7 @@ function plannerBrief(input: { agent: AgentName }): string {
     "- Decide what is already done, what is risky, and what the next small verifiable slice should be.",
     "- Update `.ai-flow/tasks.md`, `.ai-flow/state.md`, and `.ai-flow/decisions.md` when needed.",
     "- Produce a Worker-ready brief with scope, success criteria, and verification commands.",
+    "- When a Worker or Reviewer should run separately, use `ai-flow dispatch worker|reviewer --agent codex|claude` so cmux handles the session split.",
     "- Do not implement product code unless the user explicitly changes this session into a Worker session.",
     "",
     "## Current Repository State",
@@ -576,6 +645,7 @@ function plannerRoleDoc(): string {
     "- Update `.ai-flow/tasks.md`, `.ai-flow/state.md`, and `.ai-flow/decisions.md` as needed.",
     "- Keep tasks small, verifiable, and suitable for one Worker session.",
     "- Define acceptance criteria and validation commands.",
+    "- If cmux is available, dispatch Workers and Reviewers with `ai-flow dispatch worker|reviewer --agent codex|claude`; do not make the user create panes manually.",
     "- Do not edit product code unless the user explicitly changes this session into a Worker session.",
     "",
     "## Finish",
@@ -662,10 +732,47 @@ function agentSnippet(): string {
     "- Worker: read `.ai-flow/roles/worker.md`, then run `ai-flow start worker`.",
     "- Reviewer: read `.ai-flow/roles/reviewer.md`, then run `ai-flow start reviewer`.",
     "",
+    "The normal user experience is: the user talks only to Planner. Planner uses `.ai-flow/cmux.md` and `ai-flow dispatch worker|reviewer --agent codex|claude` to create separate cmux sessions when available.",
+    "",
     "At the end of the session, write a concise report and record it with `ai-flow finish <role> --file <report-file>`. Workers should pass `--complete` only after verification succeeds.",
     "",
     "The user-facing contract is role selection and review of results; CLI details are agent-internal.",
     "<!-- AI-FLOW:END -->",
+    "",
+  ].join("\n");
+}
+
+function cmuxGuide(): string {
+  return [
+    "# ai-flow cmux Guide",
+    "",
+    "This file is for agents, not end users.",
+    "",
+    "## User Experience",
+    "- The user should only talk to the Planner session.",
+    "- The user should not need to know cmux panes, surfaces, sockets, or ai-flow commands.",
+    "- Planner is responsible for splitting work into small verified slices and dispatching Worker or Reviewer sessions.",
+    "",
+    "## Planner Dispatch",
+    "Use:",
+    "",
+    "```bash",
+    "ai-flow dispatch worker --agent codex --task <task-id>",
+    "ai-flow dispatch reviewer --agent codex --task <task-id>",
+    "```",
+    "",
+    "Use `--agent claude` when Claude Code is the preferred worker.",
+    "",
+    "## cmux Safety Rules",
+    "- Prefer the current cmux workspace from `CMUX_WORKSPACE_ID`.",
+    "- Do not change focus, switch workspaces, or close panes unless the user explicitly asks.",
+    "- Dispatch should create or use helper terminal space without requiring the user to manage panes.",
+    "- If cmux is missing, run `ai-flow doctor` and explain the one missing setup step in plain language.",
+    "",
+    "## Completion Contract",
+    "- Worker sessions must run scoped verification before `ai-flow finish worker --complete`.",
+    "- Reviewer sessions stay read-focused and report findings first.",
+    "- Planner reads reports and decides whether the slice is accepted, needs another Worker pass, or needs user input.",
     "",
   ].join("\n");
 }
@@ -943,6 +1050,215 @@ function saveReport(
   return reportPath;
 }
 
+function savePrompt(role: PromptRole | SessionRole, taskId: string, agent: AgentName, prompt: string): string {
+  const promptDir = join(process.cwd(), FLOW_DIR, "prompts");
+  mkdirSync(promptDir, { recursive: true });
+  const promptPath = join(promptDir, `${timestampForFile()}-${taskId}-${role}-${agent}.md`);
+  writeFileSync(promptPath, prompt);
+  return promptPath;
+}
+
+function buildAgentReadPromptCommand(
+  agent: Exclude<AgentName, "manual">,
+  role: PromptRole,
+  promptPath: string,
+): string {
+  const instruction = [
+    `Read ${promptPath} and follow it exactly.`,
+    `This is an ai-flow ${role} session.`,
+    "Do not ask the user to run ai-flow or cmux commands.",
+  ].join(" ");
+
+  if (agent === "codex") {
+    return ["codex", "--cd", process.cwd(), instruction].map(shellQuote).join(" ");
+  }
+
+  return ["claude", instruction].map(shellQuote).join(" ");
+}
+
+function dispatchToCmux(command: string, role: PromptRole, taskId: string): {
+  workspace: string;
+  surface: string;
+} {
+  if (!commandExists("cmux")) {
+    throw new Error(
+      "cmux is not installed. Run `ai-flow doctor` for the simple setup path.",
+    );
+  }
+
+  const workspace = currentCmuxWorkspace();
+  if (!workspace) {
+    throw new Error(
+      "cmux is installed, but this Planner is not running inside a cmux workspace. Open the repo in cmux, start Planner there, then dispatch again.",
+    );
+  }
+
+  const paneResult = runCmux([
+    "--json",
+    "new-pane",
+    "--workspace",
+    workspace,
+    "--type",
+    "terminal",
+    "--direction",
+    "right",
+    "--focus",
+    "false",
+  ]);
+  if (paneResult.status !== 0) {
+    throw new Error(`cmux could not create a ${role} pane: ${paneResult.stderr || paneResult.stdout}`);
+  }
+
+  const pane = findCmuxRef(paneResult.stdout, "pane");
+  const surface =
+    findCmuxRef(paneResult.stdout, "surface") ??
+    (pane ? newestSurfaceForPane(workspace, pane) : undefined);
+
+  if (!surface) {
+    throw new Error("cmux created a pane, but ai-flow could not identify the terminal surface to send the Worker command.");
+  }
+
+  bestEffortCmux(["set-status", "ai-flow", `${role} ${taskId}`, "--workspace", workspace, "--color", "#0a84ff"]);
+  bestEffortCmux(["log", "--workspace", workspace, "--level", "info", "--", `ai-flow dispatch ${role} ${taskId}`]);
+
+  const sendResult = runCmux(["send", "--workspace", workspace, "--surface", surface, `${command}\n`]);
+  if (sendResult.status !== 0) {
+    throw new Error(`cmux could not send the ${role} command: ${sendResult.stderr || sendResult.stdout}`);
+  }
+
+  return { workspace, surface };
+}
+
+function currentCmuxWorkspace(): string | undefined {
+  if (process.env.CMUX_WORKSPACE_ID) {
+    return normalizeCmuxRef("workspace", process.env.CMUX_WORKSPACE_ID);
+  }
+
+  const identify = runCmux(["--json", "identify"]);
+  if (identify.status !== 0) {
+    return undefined;
+  }
+  return findCmuxRef(identify.stdout, "workspace");
+}
+
+function newestSurfaceForPane(workspace: string, pane: string): string | undefined {
+  const result = runCmux(["--json", "list-pane-surfaces", "--workspace", workspace]);
+  if (result.status !== 0) {
+    return undefined;
+  }
+  const surfaces = findSurfacesForPane(result.stdout, pane);
+  return surfaces[surfaces.length - 1];
+}
+
+function runCmux(args: string[]): { status: number; stdout: string; stderr: string } {
+  const result = spawnSync("cmux", args, {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: process.env,
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr || (result.error instanceof Error ? result.error.message : ""),
+  };
+}
+
+function bestEffortCmux(args: string[]): void {
+  runCmux(args);
+}
+
+function commandExists(command: string): boolean {
+  const result = spawnSync("sh", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`], {
+    encoding: "utf8",
+  });
+  return result.status === 0;
+}
+
+function normalizeCmuxRef(kind: string, value: string): string {
+  if (value.startsWith(`${kind}:`)) {
+    return value;
+  }
+  return value;
+}
+
+function findCmuxRef(output: string, kind: string): string | undefined {
+  return findAllCmuxRefs(output, kind)[0];
+}
+
+function findAllCmuxRefs(output: string, kind: string): string[] {
+  const refs = new Set<string>();
+  const refPattern = new RegExp(`\\b${kind}:\\d+\\b`, "g");
+  for (const match of output.matchAll(refPattern)) {
+    refs.add(match[0]);
+  }
+
+  try {
+    collectCmuxRefs(JSON.parse(output) as unknown, kind, refs);
+  } catch {
+    // Plain text output is acceptable; regex extraction above is the fallback.
+  }
+
+  return Array.from(refs);
+}
+
+function collectCmuxRefs(value: unknown, kind: string, refs: Set<string>): void {
+  if (typeof value === "string") {
+    const ref = value.match(new RegExp(`\\b${kind}:\\d+\\b`));
+    if (ref) {
+      refs.add(ref[0]);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectCmuxRefs(item, kind, refs);
+    }
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      collectCmuxRefs(item, kind, refs);
+    }
+  }
+}
+
+function findSurfacesForPane(output: string, pane: string): string[] {
+  try {
+    const value = JSON.parse(output) as unknown;
+    const surfaces = new Set<string>();
+    collectSurfacesForPane(value, pane, surfaces);
+    if (surfaces.size > 0) {
+      return Array.from(surfaces);
+    }
+  } catch {
+    // Fall back to all surface refs below.
+  }
+
+  return findAllCmuxRefs(output, "surface");
+}
+
+function collectSurfacesForPane(value: unknown, pane: string, surfaces: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectSurfacesForPane(item, pane, surfaces);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  const text = JSON.stringify(value);
+  if (text.includes(pane)) {
+    for (const surface of findAllCmuxRefs(text, "surface")) {
+      surfaces.add(surface);
+    }
+  }
+  for (const item of Object.values(value)) {
+    collectSurfacesForPane(item, pane, surfaces);
+  }
+}
+
 function markTaskComplete(taskId: string): void {
   const tasksPath = join(process.cwd(), FLOW_DIR, TASKS_FILE);
   const taskPattern = new RegExp(`\\b${escapeRegExp(taskId)}\\b`);
@@ -1048,6 +1364,8 @@ Usage:
   ai-flow install [--force] [--apply-agent-docs]
   ai-flow start planner|worker|reviewer [--agent manual|codex|claude] [--task T001] [--no-save]
   ai-flow finish planner|worker|reviewer [--task T001] [--file report.md] [--complete]
+  ai-flow dispatch worker|reviewer --agent codex|claude [--task T001] [--dry-run]
+  ai-flow doctor
   ai-flow status
   ai-flow next [--agent manual|codex|claude] [--role worker|reviewer] [--task T001] [--no-save]
   ai-flow prompt worker|reviewer [--agent manual|codex|claude] [--task T001] [--no-save]
@@ -1057,8 +1375,11 @@ Usage:
 
 Workflow:
   1. ai-flow install --apply-agent-docs
-  2. In any agent session, say: "Use Planner mode" or "Use Worker mode"
-  3. The agent reads .ai-flow/roles/<role>.md and runs start/finish internally
+  2. Open one Planner session in cmux and say what you want built
+  3. Planner dispatches Worker/Reviewer sessions with cmux when needed
+
+For people who do not know cmux:
+  ai-flow doctor
 
 Legacy/manual:
   ai-flow next --agent codex

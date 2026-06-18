@@ -2,14 +2,14 @@
 
 Lightweight planning and verification control plane for AI coding agents.
 
-`ai-flow` does not replace Claude Code, Codex CLI, OpenCode, Cline, or other coding agents. It gives them a shared workflow:
+`ai-flow` does not replace [cmux](https://cmux.com/), Claude Code, Codex CLI, OpenCode, Cline, or other coding agents. It gives them a shared workflow:
 
 - one planner that reads the repo state and decides the next slice
-- one writer that edits code for that slice
-- any number of read-focused reviewers or researchers
+- cmux-managed worker sessions that edit one slice
+- cmux-managed read-focused reviewers or researchers
 - durable state, prompts, reports, and verification logs in `.ai-flow/`
 
-The default model is **single writer, many readers**. No git worktree is required.
+The default model is **one user-facing Planner, one writer at a time, many readers**. No git worktree is required.
 
 ## Why
 
@@ -49,28 +49,21 @@ ai-flow install --apply-agent-docs
 
 This creates `.ai-flow/` and adds a short role-session snippet to `AGENTS.md` and `CLAUDE.md`.
 
-After that, users do not need to know the CLI. They only choose a session role in the agent chat:
+After that, users should not need to know either ai-flow or cmux. The intended experience is:
 
 ```text
-Use Planner mode. Read the current repo state and tell me the next Worker slice.
+Open one Planner session in cmux.
+Tell Planner what you want built.
+Planner splits the work, dispatches Workers/Reviewers, reads their reports, and talks back to you.
 ```
+
+For a non-technical user, the first useful thing to say is:
 
 ```text
-Use Worker mode. Take the current ai-flow task, implement it, verify it, and finish cleanly.
+Use Planner mode. I want <feature/fix>. Split it into small verified slices and run Workers as needed.
 ```
 
-```text
-Use Reviewer mode. Review the current Worker diff against the ai-flow task.
-```
-
-The agent then runs the lifecycle internally:
-
-- start the role session
-- read repo state, tasks, durable decisions, and verification commands
-- do the role-specific work
-- write a report
-- record the finish state
-- mark Worker tasks complete only after verification
+Planner then uses `ai-flow dispatch worker|reviewer` internally. If cmux is available, dispatch creates a helper pane and sends a short command to the selected agent. If cmux is missing, `ai-flow doctor` explains the single missing setup step.
 
 Planner sessions maintain `.ai-flow/tasks.md`:
 
@@ -82,13 +75,13 @@ Planner sessions maintain `.ai-flow/tasks.md`:
 
 ## Manual Mode
 
-The CLI remains available for people who want direct control or scripting.
+The CLI remains available for agents, advanced users, and scripts.
 
 ```bash
+ai-flow doctor
 ai-flow status
-ai-flow next --agent codex
-ai-flow run worker --agent codex
-ai-flow run worker --agent claude
+ai-flow dispatch worker --agent codex
+ai-flow dispatch reviewer --agent claude --task T001
 ai-flow verify
 ai-flow report --task T001 --file worker-report.md
 ```
@@ -105,7 +98,7 @@ Creates `.ai-flow/` with config, state, tasks, decisions, prompts, reports, and 
 ai-flow install [--force] [--apply-agent-docs]
 ```
 
-Installs role-session files under `.ai-flow/roles/`. With `--apply-agent-docs`, it also adds the agent-facing trigger snippet to `AGENTS.md` and `CLAUDE.md`.
+Installs role-session files under `.ai-flow/roles/` and `.ai-flow/cmux.md`. With `--apply-agent-docs`, it also adds the agent-facing trigger snippet to `AGENTS.md` and `CLAUDE.md`.
 
 ```bash
 ai-flow start planner|worker|reviewer [--agent manual|codex|claude] [--task T001]
@@ -118,6 +111,18 @@ ai-flow finish planner|worker|reviewer [--task T001] [--file report.md] [--compl
 ```
 
 Records the role report and appends a compact summary to `.ai-flow/state.md`. Workers pass `--complete` only after the task is verified.
+
+```bash
+ai-flow dispatch worker|reviewer --agent codex|claude [--task T001] [--dry-run]
+```
+
+Planner uses this to send a Worker or Reviewer into cmux. It saves the full prompt under `.ai-flow/prompts/`, creates a helper terminal pane when cmux is available, and sends the agent a short "read this prompt file" command.
+
+```bash
+ai-flow doctor
+```
+
+Checks whether cmux, Codex CLI, and Claude Code are available and explains the next setup step in plain language.
 
 ```bash
 ai-flow status
@@ -162,6 +167,7 @@ Stores a worker report and appends a compact summary to `.ai-flow/state.md`.
 Codex:
 
 ```bash
+ai-flow dispatch worker --agent codex
 ai-flow run worker --agent codex
 ai-flow run reviewer --agent codex --print
 ```
@@ -169,6 +175,7 @@ ai-flow run reviewer --agent codex --print
 Claude:
 
 ```bash
+ai-flow dispatch worker --agent claude
 ai-flow run worker --agent claude
 ai-flow run reviewer --agent claude --print
 ```
@@ -190,17 +197,19 @@ ai-flow prompt worker --agent manual
   tasks.md          small verifiable slices
   decisions.md      project decisions that should survive context resets
   agent-snippet.md  instructions to paste into agent docs if needed
+  cmux.md           agent-facing cmux dispatch protocol
   roles/            planner, worker, and reviewer lifecycle protocols
   prompts/          generated worker/reviewer prompts
   reports/          worker reports
   logs/             verification logs
 ```
 
-Commit `config.json`, `state.md`, `tasks.md`, `decisions.md`, `agent-snippet.md`, and `roles/` if you want the process to travel with the repo. Keep prompts, reports, and logs local unless your team wants those artifacts in version control.
+Commit `config.json`, `state.md`, `tasks.md`, `decisions.md`, `agent-snippet.md`, `cmux.md`, and `roles/` if you want the process to travel with the repo. Keep prompts, reports, and logs local unless your team wants those artifacts in version control.
 
 ## Design Principles
 
 - Single writer by default.
+- The user talks to Planner; Planner talks to cmux.
 - Readers can plan, review, research, and debug without editing.
 - The current repo state beats chat memory.
 - A task is not done until verification evidence exists.
