@@ -972,6 +972,7 @@ function renderDiffHtml(input: {
     '<aside class="sidebar" aria-label="Review navigation">',
     '<label class="search"><span class="visually-hidden">Search</span><input id="review-search" type="search" placeholder="Search files or code"></label>',
     '<div class="tabs"><button type="button" class="tab" data-tab="changes">Changes</button><button type="button" class="tab active" data-tab="files">Files</button></div>',
+    '<div class="mc-badges" id="mc-badges"></div>',
     `<div class="tab-panel hidden" id="changes-panel">${fileNav}</div>`,
     `<div class="tab-panel" id="files-panel">${sourceNav}</div>`,
     "</aside>",
@@ -1597,7 +1598,8 @@ body {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
   pointer-events: none;
 }
-.diff2html-container { min-width: 0; caret-color: var(--active); }
+.diff2html-container { min-width: 0; caret-color: transparent; }
+.mc-diff-cursor-row .d2h-code-side-line { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--active) 70%, transparent); }
 #diff2html-container[contenteditable] { outline: none; }
 #diff2html-container [contenteditable="false"] { caret-color: transparent; }
 .d2h-wrapper { background: transparent; color: var(--text); }
@@ -1639,7 +1641,8 @@ body {
   border-color: var(--border);
 }
 .d2h-code-side-line, .d2h-code-line {
-  padding: 0 0.6em 0 4.5em;
+  /* left pad must exceed the 58px absolutely-positioned line-number, else the +/- prefix renders behind it and looks clipped */
+  padding: 0 0.6em 0 64px;
   width: 100%;
   color: var(--text);
   cursor: text;
@@ -1894,6 +1897,11 @@ h1 { margin: 0; font-size: 18px; }
   overflow-wrap: anywhere;
   line-height: 1.45;
 }
+/* perf: let the browser skip layout/paint for off-screen rows in large files/diffs.
+   DOM is unchanged (nav, search, comment anchoring still query every row); degrades
+   gracefully where unsupported. contain-intrinsic-size keeps the scrollbar stable. */
+.source-row { content-visibility: auto; contain-intrinsic-size: auto 19px; }
+.d2h-diff-table tr { content-visibility: auto; contain-intrinsic-size: auto 18px; }
 .source-row.search-hit .source-code { background: color-mix(in srgb, var(--active) 14%, transparent); }
 .source-row.changed-line .source-code { background: color-mix(in srgb, var(--active) 9%, transparent); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--active) 55%, transparent); }
 .source-row.symbol-target .source-code {
@@ -1926,6 +1934,53 @@ h1 { margin: 0; font-size: 18px; }
   border-right: 1px solid var(--border);
   padding: 2px 8px;
 }
+/* Review comments (questions / change-requests) */
+.mc-badges { display: flex; gap: 8px; margin: 8px 0 4px; }
+.mc-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--line); color: var(--muted);
+  padding: 3px 10px; font-size: 12px; cursor: pointer;
+}
+.mc-badge:hover { border-color: var(--active); color: var(--text); }
+.mc-badge b { color: var(--text); font-variant-numeric: tabular-nums; }
+.mc-badge.mc-q b { color: var(--token-number); }
+.mc-badge.mc-c b { color: var(--token-tag); }
+.mc-comment-row td { padding: 0; background: var(--bg); }
+.mc-thread-cell { padding: 4px 12px 8px 64px; }
+.source-table .mc-thread-cell { padding: 4px 12px 8px 66px; }
+.mc-card {
+  border: 1px solid var(--border); border-left: 3px solid var(--muted);
+  border-radius: 6px; background: var(--panel); margin: 6px 0; max-width: 760px;
+  font: 12px/1.5 Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.mc-card.mc-q { border-left-color: var(--token-number); }
+.mc-card.mc-c { border-left-color: var(--token-tag); }
+.mc-card-head { display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.mc-kind { font-weight: 650; color: var(--text); }
+.mc-del { margin-left: auto; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
+.mc-del:hover { color: var(--del-strong); }
+.mc-card-body { padding: 7px 10px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mc-input {
+  display: block; box-sizing: border-box; resize: vertical;
+  margin: 8px 10px; width: calc(100% - 20px); min-height: 56px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px;
+  font: 12px/1.5 Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.mc-input:focus { outline: none; border-color: var(--active); }
+.mc-actions { display: flex; align-items: center; gap: 8px; padding: 0 10px 9px; }
+.mc-btn { background: var(--active); color: #fff; border: 0; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+.mc-btn:hover { filter: brightness(1.1); }
+.mc-btn.mc-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.mc-hint { color: var(--muted); font-size: 11px; }
+.mc-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: start center; padding-top: min(10vh, 80px); background: color-mix(in srgb, #000 32%, transparent); }
+.mc-modal.hidden { display: none; }
+.mc-modal-panel { width: min(820px, calc(100vw - 40px)); max-height: min(78vh, 720px); display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.mc-modal-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 650; }
+.mc-modal-head span { margin-right: auto; }
+.mc-modal-text { width: 100%; height: 100%; box-sizing: border-box; resize: none; border: 0; padding: 12px; background: var(--bg); color: var(--text); font: 12px/1.55 Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.mc-modal-text:focus { outline: none; }
 .tok-comment { color: var(--token-comment); font-style: italic; }
 .tok-keyword { color: var(--token-keyword); font-weight: 650; }
 .tok-string { color: var(--token-string); }
@@ -2173,7 +2228,17 @@ let currentHttpEnvName = (function () {
 })();
 let treeFocusIndex = -1;
 let selectionAnchor = null;
+let diffCursor = null; // { path, side: 'old'|'new', rowIndex, column } — keyboard caret in the side-by-side diff
 let measuredCharWidth = 0;
+
+// Review-comment state — initialized here (early) so saved comments are loaded before
+// restoreUiState()/openDefaultSourceFile() run on startup and try to render them.
+var COMMENTS_KEY = 'monacori-comments:' + location.pathname;
+var reviewComments = [];
+try { reviewComments = JSON.parse(localStorage.getItem(COMMENTS_KEY) || '[]'); } catch (commentsErr) { reviewComments = []; }
+if (!Array.isArray(reviewComments)) reviewComments = [];
+var commentSeq = reviewComments.reduce(function (max, c) { return Math.max(max, c.seq || 0); }, 0);
+var composerState = null;
 
 function prepareDiff2HtmlHunks() {
   const wrappers = Array.from(document.querySelectorAll('.d2h-file-wrapper'));
@@ -2312,23 +2377,46 @@ function firstCodeRowOfHunk(hunkRow) {
   }
   return firstRow || hunkRow;
 }
+
+// First row in a hunk that is an actual change (add/del). The .hunk marker sits on the OLD side,
+// and diff2html does NOT repeat the @@ text on the NEW side (so there is no .hunk-peer to scan).
+// The two side tables ARE positionally aligned row-for-row, so walk the hunk by index and prefer
+// the OPPOSITE side, where additions live — landing F7 on the added line, not the leading context.
+function isChangeCodeRow(row) {
+  return !!(row && isDiffCodeRow(row) && row.querySelector('.d2h-ins, .d2h-del, ins, del'));
+}
+function firstChangeRowForCaret(hunkRow) {
+  const wrapper = hunkRow.closest('.d2h-file-wrapper');
+  const sides = wrapper ? wrapper.querySelectorAll('.d2h-file-side-diff') : [];
+  const hunkSideEl = hunkRow.closest('.d2h-file-side-diff');
+  if (sides.length >= 2 && hunkSideEl) {
+    const hunkRows = Array.from(hunkSideEl.querySelectorAll('tr'));
+    const otherEl = hunkSideEl === sides[0] ? sides[1] : sides[0];
+    const otherRows = Array.from(otherEl.querySelectorAll('tr'));
+    for (let i = hunkRows.indexOf(hunkRow) + 1; i < hunkRows.length; i++) {
+      const hr = hunkRows[i];
+      if (hr.classList.contains('hunk') || hr.classList.contains('hunk-peer')) break;
+      if (isChangeCodeRow(otherRows[i])) return otherRows[i];
+      if (isChangeCodeRow(hr)) return hr;
+    }
+  }
+  return firstCodeRowOfHunk(hunkRow);
+}
 function focusDiffRow(row) {
   if (activeDiffRow) activeDiffRow.classList.remove('diff-active-row');
   activeDiffRow = row || null;
   if (!row) return;
   row.classList.add('diff-active-row');
-  const cell = row.querySelector('.d2h-code-line-ctn');
-  const container = document.getElementById('diff2html-container');
-  if (!cell || !container) return;
-  try {
-    const range = document.createRange();
-    range.selectNodeContents(cell);
-    range.collapse(true);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    container.focus({ preventScroll: true });
-  } catch (e) {}
+  // move the diff caret to follow hunk navigation (F7 / Shift+F7 / [ / ])
+  const navInfo = diffRowInfoFromNode(row);
+  if (navInfo && navInfo.path) {
+    let navSide = navInfo.side;
+    if (navSide === 'old') { // prefer the new (modified) side when it has a real line at this row
+      const navWrap = diffWrapperByPath(navInfo.path);
+      if (isDiffCodeRow(navWrap ? diffRowAt(navWrap, 'new', navInfo.rowIndex) : null)) navSide = 'new';
+    }
+    setDiffCursor(navInfo.path, navSide, navInfo.rowIndex, 0, false);
+  }
 }
 
 function renderBreadcrumb(container, path) {
@@ -2363,7 +2451,7 @@ function setActive(index, shouldScroll = true) {
   links.forEach((link) => link.classList.toggle('active', link.dataset.file === file));
   renderBreadcrumb(document.getElementById('diff-breadcrumb'), file);
   document.getElementById('hunk-counter').textContent = String(current + 1);
-  const targetRow = firstCodeRowOfHunk(active);
+  const targetRow = firstChangeRowForCaret(active);
   focusDiffRow(targetRow);
   if (shouldScroll) targetRow.scrollIntoView({ block: 'center' });
   if (file) rememberRecent(file, 'change');
@@ -2381,6 +2469,7 @@ function showOnlyFile(fileName) {
   });
   const counter = document.getElementById('file-counter');
   if (counter) counter.textContent = activeNum + ' / ' + wrappers.length + ' files';
+  ensureDiffCursor();
 }
 
 function next(delta) {
@@ -2673,8 +2762,42 @@ document.addEventListener('keydown', (event) => {
     focusTree(0);
     return;
   }
+
+  // Tab / Shift+Tab move the "cursor" horizontally between the left sidebar and the right content pane.
+  if (event.key === 'Tab') {
+    const activeEl = document.activeElement;
+    const inField = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+    if (!inField) {
+      event.preventDefault();
+      if (event.shiftKey) {
+        focusTree(treeFocusIndex >= 0 ? treeFocusIndex : 0); // ← left: focus sidebar tree
+      } else {
+        clearTreeFocus(); // → right: hand focus back to the content pane (source caret / diff nav)
+        const openPath = document.getElementById('source-viewer')?.dataset.openPath || '';
+        if (isSourceViewerVisible() && openPath && (!viewerCursor || viewerCursor.path !== openPath)) {
+          setSourceCursor(openPath, viewerCursor ? viewerCursor.lineIndex : 0, 0, false, -1);
+        }
+      }
+      return;
+    }
+  }
+
+  // Review comments: "?" = question, ">" = change request on the current line; with Cmd/Ctrl, open the merged text view.
+  if (!event.altKey && (event.key === '?' || event.key === '>')) {
+    const ce = document.activeElement;
+    const inEditable = ce && (ce.tagName === 'INPUT' || ce.tagName === 'TEXTAREA' || ce.tagName === 'SELECT');
+    if (!inEditable) {
+      event.preventDefault();
+      const kind = event.key === '?' ? 'q' : 'c';
+      if (event.metaKey || event.ctrlKey) openMergedView(kind);
+      else openComposer(kind);
+      return;
+    }
+  }
+
   if (treeFocusIndex >= 0 && handleTreeKey(event)) return;
   if (treeFocusIndex < 0 && !event.metaKey && !event.ctrlKey && !event.altKey && isSourceViewerVisible() && handleSourceCaretKey(event)) return;
+  if (treeFocusIndex < 0 && !event.metaKey && !event.ctrlKey && !event.altKey && isDiffViewVisible() && handleDiffCaretKey(event)) return;
 
   if (event.key === 'Shift' && !event.repeat) {
     const now = performance.now();
@@ -2724,6 +2847,31 @@ document.addEventListener('keydown', (event) => {
       else selectionAnchor = null;
       setSourceCursor(viewerCursor.path, viewerCursor.lineIndex, lineEdgeCol, true, -1);
       applySourceSelection();
+    }
+    return;
+  }
+
+  // Diff view: Cmd/Ctrl + Left/Right goes to the line start / end; pressing it again AT the
+  // edge crosses to the adjacent pane (Left -> old, Right -> new). Plain arrows never cross.
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && isDiffViewVisible() && diffCursor) {
+    event.preventDefault();
+    const edgeWrap = diffWrapperByPath(diffCursor.path);
+    const edgeRow = edgeWrap ? diffRowAt(edgeWrap, diffCursor.side, diffCursor.rowIndex) : null;
+    const edgeLen = edgeRow ? diffLineText(edgeRow).length : 0;
+    if (event.key === 'ArrowLeft') {
+      if (diffCursor.column > 0) {
+        setDiffCursor(diffCursor.path, diffCursor.side, diffCursor.rowIndex, 0, true); // -> line start
+      } else if (diffCursor.side === 'new') { // already at start -> cross to old (left)
+        const oldRow = edgeWrap ? diffRowAt(edgeWrap, 'old', diffCursor.rowIndex) : null;
+        if (isDiffCodeRow(oldRow)) setDiffCursor(diffCursor.path, 'old', diffCursor.rowIndex, diffLineText(oldRow).length, true);
+      }
+    } else { // ArrowRight
+      if (diffCursor.column < edgeLen) {
+        setDiffCursor(diffCursor.path, diffCursor.side, diffCursor.rowIndex, edgeLen, true); // -> line end
+      } else if (diffCursor.side === 'old') { // already at end -> cross to new (right)
+        const newRow = edgeWrap ? diffRowAt(edgeWrap, 'new', diffCursor.rowIndex) : null;
+        if (isDiffCodeRow(newRow)) setDiffCursor(diffCursor.path, 'new', diffCursor.rowIndex, 0, true);
+      }
     }
     return;
   }
@@ -2840,24 +2988,481 @@ window.addEventListener('beforeunload', saveUiState);
 (function setupDiffCaret() {
   const container = document.getElementById('diff2html-container');
   if (!container) return;
-  container.setAttribute('contenteditable', 'true');
-  container.setAttribute('spellcheck', 'false');
+  // No contenteditable: the diff caret is the JS diffCursor. A native contenteditable caret
+  // would render a second blinking cursor alongside it. Text selection (for comment capture)
+  // still works on non-editable content.
   container.setAttribute('aria-readonly', 'true');
   container.querySelectorAll('.d2h-code-side-linenumber, .d2h-code-linenumber, .d2h-code-line-prefix').forEach((el) => el.setAttribute('contenteditable', 'false'));
-  const block = (event) => event.preventDefault();
-  container.addEventListener('focusin', () => clearTreeFocus());
-  container.addEventListener('mousedown', () => clearTreeFocus());
+  const inComment = (event) => Boolean(event.target && event.target.closest && event.target.closest('.mc-comment-row'));
+  const block = (event) => { if (inComment(event)) return; event.preventDefault(); };
+  container.addEventListener('focusin', (event) => { if (!inComment(event)) clearTreeFocus(); });
+  container.addEventListener('mousedown', (event) => { if (!inComment(event)) clearTreeFocus(); });
   container.addEventListener('beforeinput', block);
   container.addEventListener('paste', block);
   container.addEventListener('drop', block);
   container.addEventListener('dragstart', block);
   container.addEventListener('keydown', (event) => {
+    if (inComment(event)) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key.length === 1 || event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Tab') {
       event.preventDefault();
     }
   });
+  container.addEventListener('click', (event) => {
+    if (inComment(event)) return;
+    const info = diffRowInfoFromNode(event.target);
+    if (info && info.path) setDiffCursor(info.path, info.side, info.rowIndex, 0, false);
+  });
+  ensureDiffCursor();
 })();
+
+// ===== Side-by-side diff caret (keyboard navigation across the old/new panes) =====
+function isDiffViewVisible() {
+  var d = document.getElementById('diff-view');
+  return Boolean(d && !d.classList.contains('hidden'));
+}
+function diffActiveWrapper() {
+  return document.querySelector('#diff2html-container .d2h-file-wrapper:not(.df-inactive)')
+    || document.querySelector('#diff2html-container .d2h-file-wrapper');
+}
+function diffWrapperByPath(path) {
+  var ws = document.querySelectorAll('#diff2html-container .d2h-file-wrapper');
+  for (var i = 0; i < ws.length; i++) {
+    var n = ws[i].querySelector('.d2h-file-name');
+    if (n && (n.textContent || '').trim() === path) return ws[i];
+  }
+  return null;
+}
+function diffSideTables(wrapper) {
+  var sides = wrapper ? wrapper.querySelectorAll('.d2h-file-side-diff') : [];
+  return { left: sides[0] || null, right: sides[sides.length - 1] || null };
+}
+function diffSideTable(wrapper, side) {
+  var t = diffSideTables(wrapper);
+  return side === 'old' ? t.left : t.right;
+}
+function diffRowsOf(sideTable) {
+  if (!sideTable) return [];
+  return Array.prototype.slice.call(sideTable.querySelectorAll('tr')).filter(function (r) {
+    return !r.classList.contains('mc-comment-row') && !r.classList.contains('mc-spacer-row');
+  });
+}
+function diffRowAt(wrapper, side, rowIndex) {
+  var rows = diffRowsOf(diffSideTable(wrapper, side));
+  return rows[rowIndex] || null;
+}
+function diffCellCtn(row) {
+  return row ? row.querySelector('.d2h-code-line-ctn') : null;
+}
+function diffLineText(row) {
+  var ctn = diffCellCtn(row);
+  return ctn ? (ctn.textContent || '') : '';
+}
+function diffLineNumber(row) {
+  var n = row ? row.querySelector('.d2h-code-side-linenumber') : null;
+  var v = n ? parseInt((n.textContent || '').trim(), 10) : NaN;
+  return isFinite(v) ? v : null;
+}
+function diffRowInfoFromNode(node) {
+  var el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;
+  if (!el || !el.closest) return null;
+  var wrapper = el.closest('.d2h-file-wrapper');
+  var sideEl = el.closest('.d2h-file-side-diff');
+  var row = el.closest('tr');
+  if (!wrapper || !sideEl || !row) return null;
+  var nameEl = wrapper.querySelector('.d2h-file-name');
+  var path = (nameEl && nameEl.textContent ? nameEl.textContent : '').trim();
+  var t = diffSideTables(wrapper);
+  var side = sideEl === t.left ? 'old' : 'new';
+  if (!isDiffCodeRow(row)) return null;
+  var rowIndex = diffRowsOf(sideEl).indexOf(row);
+  if (!path || rowIndex < 0) return null;
+  return { path: path, side: side, rowIndex: rowIndex };
+}
+function diffCaretDomPosition(ctn, column) {
+  if (!ctn) return null;
+  var remaining = column;
+  var walker = document.createTreeWalker(ctn, NodeFilter.SHOW_TEXT);
+  var node;
+  while ((node = walker.nextNode())) {
+    var len = node.textContent.length;
+    if (remaining <= len) return { node: node, offset: remaining };
+    remaining -= len;
+  }
+  return { node: ctn, offset: ctn.childNodes.length };
+}
+var diffCaretSpan = null;
+function clearDiffCaret() {
+  var container = document.getElementById('diff2html-container');
+  if (container) {
+    container.querySelectorAll('.mc-diff-cursor-row').forEach(function (r) { r.classList.remove('mc-diff-cursor-row'); });
+    // remove ALL caret spans (not just the tracked one) so a stray indicator never lingers
+    container.querySelectorAll('.code-cursor').forEach(function (s) { var p = s.parentNode; if (p) { p.removeChild(s); if (p.normalize) p.normalize(); } });
+  }
+  diffCaretSpan = null;
+}
+function renderDiffCaret() {
+  clearDiffCaret();
+  if (!diffCursor) return;
+  var wrapper = diffWrapperByPath(diffCursor.path);
+  if (!wrapper) return;
+  var row = diffRowAt(wrapper, diffCursor.side, diffCursor.rowIndex);
+  if (!row) return;
+  row.classList.add('mc-diff-cursor-row');
+  var ctn = diffCellCtn(row);
+  if (!ctn) return;
+  // Empty line (ctn is just a <br>): the row highlight marks the caret. Inserting a caret span
+  // next to the <br> would push it onto a second visual line and break the row's height.
+  if ((ctn.textContent || '').length === 0) return;
+  var pos = diffCaretDomPosition(ctn, diffCursor.column);
+  if (!pos) return;
+  var span = document.createElement('span');
+  span.className = 'code-cursor';
+  span.setAttribute('aria-hidden', 'true');
+  try {
+    var off = pos.node.nodeType === 3 ? Math.min(pos.offset, (pos.node.textContent || '').length) : pos.offset;
+    var range = document.createRange();
+    range.setStart(pos.node, off);
+    range.collapse(true);
+    range.insertNode(span);
+    diffCaretSpan = span;
+  } catch (e) { diffCaretSpan = null; }
+}
+function setDiffCursor(path, side, rowIndex, column, reveal) {
+  var wrapper = diffWrapperByPath(path);
+  if (!wrapper) return;
+  var rows = diffRowsOf(diffSideTable(wrapper, side));
+  if (!rows.length) return;
+  var ri = Math.max(0, Math.min(rowIndex, rows.length - 1));
+  var col = Math.max(0, Math.min(column, diffLineText(rows[ri]).length));
+  diffCursor = { path: path, side: side, rowIndex: ri, column: col };
+  renderDiffCaret();
+  if (reveal) {
+    var r = diffRowAt(wrapper, side, ri);
+    if (r && r.scrollIntoView) requestAnimationFrame(function () { try { r.scrollIntoView({ block: 'nearest' }); } catch (e) {} });
+  }
+}
+function isDiffCodeRow(row) {
+  if (!row) return false;
+  if (row.querySelector('.d2h-emptyplaceholder, .d2h-code-side-emptyplaceholder')) return false; // added/removed counterpart — no real line
+  if (!row.querySelector('.d2h-code-line-ctn')) return false;
+  var num = row.querySelector('.d2h-code-side-linenumber');
+  return !!num && (num.textContent || '').trim().length > 0; // real code line has a line number (excludes hunk-info rows)
+}
+function firstDiffCodeRow(wrapper, side) {
+  var rows = diffRowsOf(diffSideTable(wrapper, side));
+  for (var i = 0; i < rows.length; i++) { if (isDiffCodeRow(rows[i])) return i; }
+  return -1;
+}
+function ensureDiffCursor() {
+  if (!isDiffViewVisible()) return;
+  var wrapper = diffActiveWrapper();
+  if (!wrapper) return;
+  var nameEl = wrapper.querySelector('.d2h-file-name');
+  var path = (nameEl && nameEl.textContent ? nameEl.textContent : '').trim();
+  if (!path) return;
+  if (diffCursor && diffCursor.path === path) { renderDiffCaret(); return; }
+  var ri = firstDiffCodeRow(wrapper, 'new');
+  if (ri < 0) return;
+  setDiffCursor(path, 'new', ri, 0, false);
+}
+function moveDiffCursor(dLine, dColumn) {
+  if (!diffCursor) return;
+  var wrapper = diffWrapperByPath(diffCursor.path);
+  if (!wrapper) return;
+  var side = diffCursor.side;
+  var rows = diffRowsOf(diffSideTable(wrapper, side));
+  var ri = diffCursor.rowIndex;
+  var col = diffCursor.column;
+  var text = diffLineText(rows[ri]);
+  // Plain arrows stay within the current pane (no auto pane-crossing — that is Cmd+Left/Right).
+  if (dColumn < 0) {
+    if (col > 0) { col -= 1; }
+    else { // at line start: end of previous code line in the SAME pane
+      var p = ri - 1; while (p >= 0 && !isDiffCodeRow(rows[p])) p -= 1;
+      if (p >= 0) { ri = p; col = diffLineText(rows[p]).length; }
+    }
+  } else if (dColumn > 0) {
+    if (col < text.length) { col += 1; }
+    else { // at line end: start of next code line in the SAME pane
+      var nx = ri + 1; while (nx < rows.length && !isDiffCodeRow(rows[nx])) nx += 1;
+      if (nx < rows.length) { ri = nx; col = 0; }
+    }
+  }
+  if (dLine !== 0) {
+    var rows2 = diffRowsOf(diffSideTable(wrapper, side));
+    var step = dLine > 0 ? 1 : -1;
+    var cand = ri + step;
+    while (cand >= 0 && cand < rows2.length && !isDiffCodeRow(rows2[cand])) cand += step;
+    if (cand >= 0 && cand < rows2.length) { ri = cand; col = Math.min(col, diffLineText(rows2[ri]).length); }
+  }
+  setDiffCursor(diffCursor.path, side, ri, col, true);
+}
+function handleDiffCaretKey(event) {
+  if (!isDiffViewVisible() || !diffCursor) return false;
+  var ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return false;
+  if (event.key === 'ArrowDown') { event.preventDefault(); moveDiffCursor(1, 0); return true; }
+  if (event.key === 'ArrowUp') { event.preventDefault(); moveDiffCursor(-1, 0); return true; }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); moveDiffCursor(0, -1); return true; }
+  if (event.key === 'ArrowRight') { event.preventDefault(); moveDiffCursor(0, 1); return true; }
+  return false;
+}
+
+// ===== Review comments: questions ("?") and change-requests (">") =====
+// (COMMENTS_KEY / reviewComments / commentSeq / composerState are declared near the top of the script)
+function saveComments() {
+  try { localStorage.setItem(COMMENTS_KEY, JSON.stringify(reviewComments)); } catch (e) {}
+}
+function commentsAt(path, line) {
+  return reviewComments.filter(function (c) { return c.path === path && c.line === line; });
+}
+function commentKindLabel(kind) {
+  return kind === 'q' ? '❓ Question' : '✎ Change request';
+}
+function relevantLines(path) {
+  var set = {};
+  reviewComments.forEach(function (c) { if (c.path === path) set[c.line] = true; });
+  if (composerState && composerState.path === path) set[composerState.line] = true;
+  return Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+}
+function addComment(kind, path, line, code, text) {
+  var trimmed = String(text || '').trim();
+  if (!trimmed) return;
+  commentSeq += 1;
+  reviewComments.push({ seq: commentSeq, kind: kind, path: path, line: line, code: String(code || ''), text: trimmed });
+  saveComments();
+}
+function deleteComment(seq) {
+  reviewComments = reviewComments.filter(function (c) { return c.seq !== seq; });
+  saveComments();
+  refreshComments();
+}
+
+function currentCommentTarget() {
+  var sel = window.getSelection();
+  var selText = (sel && sel.toString) ? sel.toString() : '';
+  var hasSel = !!sel && !sel.isCollapsed && selText.trim().length > 0;
+  // Source view: anchor to the caret line (or the selection's first line); attach code ONLY when text is selected.
+  if (isSourceViewerVisible() && viewerCursor) {
+    var sLine = viewerCursor.lineIndex + 1;
+    if (hasSel && selectionAnchor) sLine = Math.min(selectionAnchor.lineIndex, viewerCursor.lineIndex) + 1;
+    return { path: viewerCursor.path, line: sLine, code: hasSel ? selText : '' };
+  }
+  // Diff view: prefer the explicit diff caret when there is no text selection.
+  if (!hasSel && diffCursor && isDiffViewVisible()) {
+    var dwrap = diffWrapperByPath(diffCursor.path);
+    var drow = dwrap ? diffRowAt(dwrap, diffCursor.side, diffCursor.rowIndex) : null;
+    var dline = drow ? diffLineNumber(drow) : null;
+    if (dline != null) return { path: diffCursor.path, line: dline, code: '' };
+  }
+  // Diff view: derive file + line from the selection/click position; attach selected code only when dragging.
+  var node = sel && sel.anchorNode;
+  var el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;
+  var wrapper = (el && el.closest && el.closest('.d2h-file-wrapper')) || document.querySelector('#diff2html-container .d2h-file-wrapper:not(.df-inactive)');
+  if (!wrapper) return null;
+  var nameEl = wrapper.querySelector('.d2h-file-name');
+  var path = (nameEl && nameEl.textContent ? nameEl.textContent : '').trim();
+  if (!path) return null;
+  var row = el && el.closest ? el.closest('tr') : null;
+  if (!row || !row.querySelector('.d2h-code-side-linenumber')) {
+    var sides0 = wrapper.querySelectorAll('.d2h-file-side-diff');
+    var right0 = sides0[sides0.length - 1];
+    var firstNum = right0 ? right0.querySelector('.d2h-code-side-linenumber') : null;
+    row = firstNum ? firstNum.closest('tr') : null;
+  }
+  if (!row) return null;
+  var numEl = row.querySelector('.d2h-code-side-linenumber');
+  var line = numEl ? parseInt((numEl.textContent || '').trim(), 10) : NaN;
+  if (!isFinite(line)) return null;
+  return { path: path, line: line, code: hasSel ? selText : '' };
+}
+
+function threadHtml(path, line) {
+  var html = '';
+  commentsAt(path, line).forEach(function (c) {
+    html += '<div class="mc-card mc-' + c.kind + '">'
+      + '<div class="mc-card-head"><span class="mc-kind">' + commentKindLabel(c.kind) + '</span>'
+      + '<button type="button" class="mc-del" data-seq="' + c.seq + '" title="Delete">×</button></div>'
+      + '<div class="mc-card-body">' + escapeHtml(c.text) + '</div></div>';
+  });
+  if (composerState && composerState.path === path && composerState.line === line) {
+    var ph = composerState.kind === 'q' ? 'Ask a question about this line' : 'Request a change for this line';
+    html += '<div class="mc-card mc-' + composerState.kind + ' mc-composer">'
+      + '<div class="mc-card-head"><span class="mc-kind">' + commentKindLabel(composerState.kind) + '</span></div>'
+      + '<textarea class="mc-input" rows="3" placeholder="' + ph + '"></textarea>'
+      + '<div class="mc-actions"><button type="button" class="mc-btn mc-save">Comment</button>'
+      + '<button type="button" class="mc-btn mc-ghost mc-cancel">Cancel</button>'
+      + '<span class="mc-hint">Cmd/Ctrl+Enter to save, Esc to cancel</span></div></div>';
+  }
+  return html;
+}
+
+function injectThreadRow(anchorRow, path, line) {
+  if (!anchorRow || !anchorRow.parentNode) return;
+  var tr = document.createElement('tr');
+  tr.className = 'mc-comment-row';
+  var td = document.createElement('td');
+  td.colSpan = 2;
+  td.className = 'mc-thread-cell';
+  td.innerHTML = threadHtml(path, line);
+  tr.appendChild(td);
+  anchorRow.parentNode.insertBefore(tr, anchorRow.nextSibling);
+}
+
+function renderDiffComments() {
+  var container = document.getElementById('diff2html-container');
+  if (!container) return;
+  container.querySelectorAll('.mc-comment-row').forEach(function (r) { r.remove(); });
+  container.querySelectorAll('.d2h-file-wrapper').forEach(function (w) {
+    var nameEl = w.querySelector('.d2h-file-name');
+    var path = (nameEl && nameEl.textContent ? nameEl.textContent : '').trim();
+    if (!path) return;
+    var lines = relevantLines(path);
+    if (!lines.length) return;
+    var sides = w.querySelectorAll('.d2h-file-side-diff');
+    var right = sides[sides.length - 1];
+    if (!right) return;
+    var rows = right.querySelectorAll('tr');
+    lines.forEach(function (line) {
+      for (var i = 0; i < rows.length; i++) {
+        var num = rows[i].querySelector('.d2h-code-side-linenumber');
+        if (num && (num.textContent || '').trim() === String(line)) { injectThreadRow(rows[i], path, line); break; }
+      }
+    });
+  });
+}
+
+function renderSourceComments() {
+  var body = document.getElementById('source-body');
+  if (!body) return;
+  body.querySelectorAll('.mc-comment-row').forEach(function (r) { r.remove(); });
+  var viewer = document.getElementById('source-viewer');
+  var path = viewer ? (viewer.dataset.openPath || '') : '';
+  if (!path) return;
+  relevantLines(path).forEach(function (line) {
+    var anchor = body.querySelector('.source-row[data-line-index="' + (line - 1) + '"]');
+    if (anchor) injectThreadRow(anchor, path, line);
+  });
+}
+
+function renderCommentBadges() {
+  var host = document.getElementById('mc-badges');
+  if (!host) return;
+  var q = 0, c = 0;
+  reviewComments.forEach(function (x) { if (x.kind === 'q') q += 1; else c += 1; });
+  host.innerHTML = '<button type="button" class="mc-badge mc-q" data-kind="q" title="Question comments (Cmd/Ctrl + ?)">❓ <b>' + q + '</b></button>'
+    + '<button type="button" class="mc-badge mc-c" data-kind="c" title="Change-request comments">✎ <b>' + c + '</b></button>';
+}
+
+function refreshComments() {
+  renderDiffComments();
+  if (isSourceViewerVisible()) renderSourceComments();
+  renderCommentBadges();
+  if (composerState) {
+    var ta = document.querySelector('.mc-composer .mc-input');
+    if (ta) { ta.focus(); try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e) {} }
+  }
+}
+
+function openComposer(kind) {
+  var target = currentCommentTarget();
+  if (!target) return;
+  composerState = { kind: kind, path: target.path, line: target.line, code: target.code };
+  refreshComments();
+}
+function closeComposer() {
+  if (!composerState) return;
+  composerState = null;
+  refreshComments();
+}
+function saveComposer(ta) {
+  if (!composerState) return;
+  var box = ta || document.querySelector('.mc-composer .mc-input');
+  if (!box) return;
+  addComment(composerState.kind, composerState.path, composerState.line, composerState.code, box.value);
+  composerState = null;
+  refreshComments();
+}
+
+function buildMergedText(kind) {
+  var items = reviewComments.filter(function (c) { return c.kind === kind; });
+  var nl = String.fromCharCode(10);
+  var lines = [];
+  lines.push((kind === 'q' ? '# Questions' : '# Change requests') + ' (' + items.length + ')');
+  lines.push('');
+  items.forEach(function (c) {
+    lines.push('### ' + c.path + ':' + c.line);
+    if (c.code && c.code.trim()) lines.push('> ' + c.code.trim());
+    lines.push(c.text);
+    lines.push('');
+  });
+  return lines.join(nl);
+}
+
+function openMergedView(kind) {
+  var existing = document.getElementById('mc-modal');
+  if (existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'mc-modal';
+  modal.className = 'mc-modal';
+  var panel = document.createElement('div');
+  panel.className = 'mc-modal-panel';
+  var head = document.createElement('div');
+  head.className = 'mc-modal-head';
+  var title = document.createElement('span');
+  title.textContent = kind === 'q' ? 'Question comments' : 'Change-request comments';
+  var copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'mc-btn';
+  copyBtn.textContent = 'Copy all';
+  var closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'mc-btn mc-ghost';
+  closeBtn.textContent = 'Close';
+  var area = document.createElement('textarea');
+  area.className = 'mc-modal-text';
+  area.readOnly = true;
+  area.value = buildMergedText(kind);
+  copyBtn.addEventListener('click', function () {
+    area.focus(); area.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    if (navigator.clipboard && navigator.clipboard.writeText) { try { navigator.clipboard.writeText(area.value); ok = true; } catch (e) {} }
+    copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
+    setTimeout(function () { copyBtn.textContent = 'Copy all'; }, 1500);
+  });
+  closeBtn.addEventListener('click', function () { modal.remove(); });
+  head.appendChild(title);
+  head.appendChild(copyBtn);
+  head.appendChild(closeBtn);
+  panel.appendChild(head);
+  panel.appendChild(area);
+  modal.appendChild(panel);
+  modal.addEventListener('mousedown', function (e) { if (e.target === modal) modal.remove(); });
+  modal.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); modal.remove(); } });
+  document.body.appendChild(modal);
+  requestAnimationFrame(function () { area.focus(); area.select(); });
+}
+
+document.addEventListener('click', function (event) {
+  var t = event.target;
+  if (!t || !t.closest) return;
+  var del = t.closest('.mc-del');
+  if (del) { event.preventDefault(); deleteComment(parseInt(del.dataset.seq, 10)); return; }
+  if (t.closest('.mc-save')) { event.preventDefault(); saveComposer(); return; }
+  if (t.closest('.mc-cancel')) { event.preventDefault(); closeComposer(); return; }
+  var badge = t.closest('.mc-badge');
+  if (badge) { event.preventDefault(); openMergedView(badge.dataset.kind); return; }
+});
+document.addEventListener('keydown', function (event) {
+  var t = event.target;
+  if (!t || !t.classList || !t.classList.contains('mc-input')) return;
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeComposer(); return; }
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); saveComposer(t); return; }
+}, true);
+
+refreshComments();
 
 (function checkForUpdate() {
   try { if (sessionStorage.getItem('monacori-update-checked')) return; } catch (e) {}
@@ -3174,6 +3779,13 @@ function isSourceViewerVisible() {
 }
 
 function openDiffFileAtCaret() {
+  if (diffCursor && isDiffViewVisible()) {
+    const dwrap = diffWrapperByPath(diffCursor.path);
+    const drow = dwrap ? diffRowAt(dwrap, diffCursor.side, diffCursor.rowIndex) : null;
+    const dline = drow ? diffLineNumber(drow) : null;
+    if (sourceByPath.has(diffCursor.path)) { setSourceCursor(diffCursor.path, dline != null ? dline - 1 : 0, 0, true, -1); return; }
+    openSourceFile(diffCursor.path); return;
+  }
   const sel = window.getSelection();
   const node = sel && sel.anchorNode;
   const el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;
@@ -3355,6 +3967,7 @@ function openSourceFile(path, shouldSwitch = true) {
     body.innerHTML = renderSourceTable(file, searchInput?.value || '');
     if (httpEnvSelect) httpEnvSelect.classList.add('hidden');
   }
+  renderSourceComments();
   if (shouldSwitch) showSourceView();
 }
 
