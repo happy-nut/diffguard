@@ -62,19 +62,6 @@ type DiffFile = {
   hunks: DiffHunk[];
 };
 
-type DiffTreeNode = {
-  name: string;
-  path: string;
-  children: Map<string, DiffTreeNode>;
-  file?: {
-    index: number;
-    firstHunk: number;
-    hunkCount: number;
-    status: string;
-    displayPath: string;
-  };
-};
-
 type SourceFile = {
   path: string;
   name: string;
@@ -1002,6 +989,7 @@ function renderDiffHtml(input: {
     '<div class="toolbar source-toolbar">',
     '<div class="source-file-meta"><span id="source-title">Source</span><span id="source-meta">Select a file from the Files tab.</span></div>',
     '<select id="http-env-select" class="http-env-select hidden" title="HTTP Client environment" aria-label="HTTP environment"></select>',
+    '<button type="button" id="source-viewed-toggle" class="plain-button source-viewed-toggle" aria-pressed="false" title="Mark this file as viewed" hidden>Viewed</button>',
     '<button type="button" id="back-to-diff" class="plain-button">Diff</button>',
     "</div>",
     '<div id="source-body" class="source-body empty">Select a file from the Files tab.</div>',
@@ -1058,47 +1046,6 @@ function renderDiffTree(files: DiffFile[]): string {
     ].join("");
   });
   return `<nav class="tree changes-flat">${rows.join("")}</nav>`;
-}
-
-function renderTreeChildren(node: DiffTreeNode, depth: number): string {
-  return Array.from(node.children.values())
-    .sort((a, b) => {
-      if (Boolean(a.file) !== Boolean(b.file)) {
-        return a.file ? 1 : -1;
-      }
-      return a.name.localeCompare(b.name);
-    })
-    .map((child) => renderTreeNode(child, depth))
-    .join("\n");
-}
-
-function renderTreeNode(node: DiffTreeNode, depth: number): string {
-  if (node.file) {
-    const file = node.file;
-    return [
-      `<a class="file-link tree-file" href="#file-${file.index}" data-hunk="${file.firstHunk}" data-file="${escapeAttr(file.displayPath)}" style="--depth:${depth}">`,
-      `<span class="status status-${escapeAttr(file.status)}">${escapeHtml(file.status)}</span>`,
-      `<span class="path" title="${escapeAttr(file.displayPath)}">${escapeHtml(node.name)}</span>`,
-      `<span class="count">${file.hunkCount}</span>`,
-      "</a>",
-    ].join("");
-  }
-
-  let labelNode: DiffTreeNode = node;
-  const names = [node.name];
-  for (;;) {
-    const entries = Array.from(labelNode.children.values());
-    if (entries.length !== 1 || entries[0].file) break;
-    names.push(entries[0].name);
-    labelNode = entries[0];
-  }
-
-  return [
-    `<details class="tree-dir" open style="--depth:${depth}">`,
-    `<summary><span class="folder-icon">v</span><span class="path">${escapeHtml(names.join("/"))}</span></summary>`,
-    renderTreeChildren(labelNode, depth + 1),
-    "</details>",
-  ].join("\n");
 }
 
 function renderSourceTree(files: SourceFile[]): string {
@@ -1904,8 +1851,11 @@ h1 { margin: 0; font-size: 18px; }
 .empty { padding: 24px; color: var(--muted); }
 .source-viewer { min-height: 100vh; }
 .source-toolbar { margin-bottom: 0; }
+.source-viewed-toggle.is-viewed { border-color: #6ab04c; color: #6ab04c; }
+.source-viewed-toggle[hidden] { display: none; }
 .source-file-meta {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -2330,6 +2280,22 @@ function applyViewedState() {
   links.forEach((link) => {
     link.classList.toggle('viewed', isFileViewed(link.dataset.file || ''));
   });
+  sourceLinks.forEach((link) => {
+    link.classList.toggle('viewed', isFileViewed(link.dataset.sourceFile || ''));
+  });
+  refreshSourceViewedToggle();
+}
+
+function refreshSourceViewedToggle() {
+  const toggle = document.getElementById('source-viewed-toggle');
+  if (!toggle) return;
+  const path = document.getElementById('source-viewer')?.dataset.openPath || '';
+  const known = Boolean(path && currentFileSignature(path));
+  toggle.hidden = !known;
+  const viewed = known && isFileViewed(path);
+  toggle.classList.toggle('is-viewed', viewed);
+  toggle.setAttribute('aria-pressed', viewed ? 'true' : 'false');
+  toggle.textContent = viewed ? '✓ Viewed' : 'Viewed';
 }
 
 let activeDiffRow = null;
@@ -2820,6 +2786,10 @@ document.querySelectorAll('.tab').forEach((button) => {
 });
 
 document.getElementById('back-to-diff')?.addEventListener('click', () => showDiffView(true));
+document.getElementById('source-viewed-toggle')?.addEventListener('click', () => {
+  const path = document.getElementById('source-viewer')?.dataset.openPath || '';
+  if (path) setFileViewed(path, !isFileViewed(path));
+});
 document.getElementById('source-body')?.addEventListener('click', handleSourceClick);
 document.addEventListener('copy', handleSourceCopy);
 
@@ -3363,6 +3333,7 @@ function openSourceFile(path, shouldSwitch = true) {
     file.embedded ? 'searchable' : file.skippedReason || 'not embedded',
   ].join(' | ');
   document.getElementById('source-meta').textContent = meta;
+  refreshSourceViewedToggle();
   const body = document.getElementById('source-body');
   if (!file.embedded) {
     body.className = 'source-body empty';
