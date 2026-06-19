@@ -88,6 +88,23 @@ type SourceFile = {
   skippedReason?: string;
 };
 
+export type HttpSendRequest = {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: string;
+};
+
+export type HttpSendResult = {
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  error?: string;
+  durationMs: number;
+};
+
 type SourceTreeNode = {
   name: string;
   path: string;
@@ -608,6 +625,7 @@ export function buildDiffReview(input: {
   const files = parseUnifiedDiff(diffText);
   const sourceFiles = collectSourceFiles(files);
   const fileStates = collectReviewFileStates(files, sourceFiles);
+  const httpEnvironments = collectHttpEnvironments(process.cwd());
   const hunks = files.reduce((sum, file) => sum + file.hunks.length, 0);
   const generatedAt = new Date().toISOString();
   const diffHtml = renderDiff2Html(diffText);
@@ -615,12 +633,15 @@ export function buildDiffReview(input: {
     .update(diffText)
     .update("\n")
     .update(sourceFiles.map((file) => `${file.path}\0${file.size}\0${file.embedded ? file.content : file.skippedReason ?? ""}`).join("\n"))
+    .update("\n")
+    .update(JSON.stringify(httpEnvironments))
     .digest("hex");
   const html = renderDiffHtml({
     files,
     diffHtml,
     sourceFiles,
     fileStates,
+    httpEnvironments,
     title: input.title,
     subtitle: diffSubtitle(input),
     watch: Boolean(input.watch),
@@ -840,6 +861,11 @@ function serveDiffWatch(input: {
         return;
       }
 
+      if (requestUrl.pathname === "/__http_send" && request.method === "POST") {
+        void handleHttpProxy(request, response);
+        return;
+      }
+
       if (requestUrl.pathname === "/" || requestUrl.pathname === "/review") {
         const latest = build();
         writeHttp(response, 200, "text/html; charset=utf-8", latest.html);
@@ -871,11 +897,66 @@ function serveDiffWatch(input: {
   });
 }
 
+// Performs an HTTP request on behalf of the sandboxed renderer. Used by both the
+// Electron IPC handler (app-main.ts) and the browser-mode proxy below.
+export async function performHttpRequest(request: HttpSendRequest): Promise<HttpSendResult> {
+  const startedAt = Date.now();
+  const method = (request.method || "GET").toUpperCase();
+  try {
+    const hasBody = typeof request.body === "string" && request.body.length > 0
+      && method !== "GET" && method !== "HEAD";
+    const response = await fetch(request.url, {
+      method,
+      headers: request.headers ?? {},
+      body: hasBody ? request.body : undefined,
+      redirect: "follow",
+    });
+    const body = await response.text();
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+    return {
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+      body,
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - startedAt,
+    };
+  }
+}
+
+async function handleHttpProxy(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(chunk as Buffer);
+    }
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as HttpSendRequest;
+    const result = await performHttpRequest(payload);
+    writeHttpJson(response, result);
+  } catch (error) {
+    writeHttpJson(response, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: 0,
+    });
+  }
+}
+
 function renderDiffHtml(input: {
   files: DiffFile[];
   diffHtml: string;
   sourceFiles: SourceFile[];
   fileStates: ReviewFileState[];
+  httpEnvironments: Record<string, Record<string, string>>;
   title: string;
   subtitle: string;
   watch?: boolean;
@@ -920,6 +1001,7 @@ function renderDiffHtml(input: {
     '<section id="source-viewer" class="source-viewer">',
     '<div class="toolbar source-toolbar">',
     '<div class="source-file-meta"><span id="source-title">Source</span><span id="source-meta">Select a file from the Files tab.</span></div>',
+    '<select id="http-env-select" class="http-env-select hidden" title="HTTP Client environment" aria-label="HTTP environment"></select>',
     '<button type="button" id="back-to-diff" class="plain-button">Diff</button>',
     "</div>",
     '<div id="source-body" class="source-body empty">Select a file from the Files tab.</div>',
@@ -937,6 +1019,7 @@ function renderDiffHtml(input: {
     `<script type="application/json" id="review-meta" data-watch="${input.watch ? "true" : "false"}" data-signature="${escapeAttr(input.signature ?? "")}" data-generated-at="${escapeAttr(input.generatedAt ?? "")}">{}</script>`,
     `<script type="application/json" id="source-files-data">${jsonForScript(input.sourceFiles)}</script>`,
     `<script type="application/json" id="file-state-data">${jsonForScript(input.fileStates)}</script>`,
+    `<script type="application/json" id="http-env-data">${jsonForScript(input.httpEnvironments)}</script>`,
     `<script>window.__MONACORI_VERSION__=${JSON.stringify(packageVersion)};</script>`,
     "<script>",
     diffScript(),
@@ -1372,6 +1455,33 @@ function collectReviewFileStates(diffFiles: DiffFile[], sourceFiles: SourceFile[
   return Array.from(states.entries())
     .map(([path, signature]) => ({ path, signature }))
     .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+// Reads IntelliJ-style HTTP Client environment files from the project root and
+// merges them into { envName: { varName: value } }. The private file overrides
+// the public one so secrets stay out of source control.
+function collectHttpEnvironments(root: string): Record<string, Record<string, string>> {
+  const result: Record<string, Record<string, string>> = {};
+  for (const fileName of ["http-client.env.json", "http-client.private.env.json"]) {
+    const filePath = join(root, fileName);
+    if (!existsSync(filePath)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(filePath, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") continue;
+    for (const [envName, rawVars] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!rawVars || typeof rawVars !== "object") continue;
+      const target = result[envName] ?? (result[envName] = {});
+      for (const [key, value] of Object.entries(rawVars as Record<string, unknown>)) {
+        if (typeof value === "string") target[key] = value;
+        else if (typeof value === "number" || typeof value === "boolean") target[key] = String(value);
+      }
+    }
+  }
+  return result;
 }
 
 function isSourceCandidate(path: string): boolean {
@@ -1977,6 +2087,97 @@ h1 { margin: 0; font-size: 18px; }
   .d2h-files-diff { grid-template-columns: 1fr; }
   .d2h-file-side-diff:first-child { border-right: 0; border-bottom: 1px solid var(--border); }
 }
+.http-env-select {
+  margin-left: auto;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.http-gutter { white-space: nowrap; }
+.http-run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #59a869;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.http-run:hover { background: color-mix(in srgb, #59a869 28%, transparent); color: #6cc17b; }
+.http-request-line .source-code { font-weight: 600; }
+.http-method { color: var(--token-keyword); font-weight: 700; }
+.http-sep { color: var(--muted); }
+.http-var { border-radius: 3px; padding: 0 1px; }
+.http-var.known { color: var(--token-string); background: color-mix(in srgb, var(--token-string) 15%, transparent); }
+.http-var.unknown { color: #e06c75; background: color-mix(in srgb, #e06c75 16%, transparent); text-decoration: underline dotted; }
+.http-response-row td { padding: 0 14px 0 0; border: 0; background: transparent; }
+.http-response {
+  margin: 6px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--active) 5%, var(--panel));
+  overflow: hidden;
+  font-size: 12px;
+}
+.http-response.loading { padding: 10px 12px; color: var(--muted); font-style: italic; }
+.http-resp-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--active) 8%, transparent);
+}
+.http-status { font-weight: 700; }
+.http-status.ok { color: #59a869; }
+.http-status.warn { color: #d9a343; }
+.http-status.bad { color: #e06c75; }
+.http-resp-meta { color: var(--muted); }
+.http-resp-toggle {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.http-resp-toggle:hover { border-color: var(--active); color: var(--active); }
+.http-resp-headers {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 3px;
+  max-height: 180px;
+  overflow: auto;
+}
+.http-resp-headers.hidden { display: none; }
+.http-h { display: flex; gap: 10px; }
+.http-h-k { color: var(--token-keyword); min-width: 170px; flex-shrink: 0; }
+.http-h-v { color: var(--fg); word-break: break-all; }
+.http-resp-body {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 460px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.http-resp-empty { color: var(--muted); font-style: italic; }
 `;
 }
 
@@ -1989,6 +2190,10 @@ const links = Array.from(document.querySelectorAll('#changes-panel .file-link'))
 const sourceLinks = Array.from(document.querySelectorAll('.source-link'));
 const sourceFiles = JSON.parse(document.getElementById('source-files-data')?.textContent || '[]');
 const fileStates = JSON.parse(document.getElementById('file-state-data')?.textContent || '[]');
+const httpEnvironments = JSON.parse(document.getElementById('http-env-data')?.textContent || '{}');
+const httpEnvNames = Object.keys(httpEnvironments);
+const httpEnvKey = 'monacori-http-env:' + location.pathname;
+const httpRequestsByPath = new Map();
 const sourceByPath = new Map(sourceFiles.map((file) => [file.path, file]));
 const fileSignatureByPath = new Map(fileStates.map((file) => [file.path, file.signature]));
 const searchInput = document.getElementById('review-search');
@@ -2009,6 +2214,12 @@ let quickMode = 'all';
 let quickItems = [];
 let quickActive = 0;
 let viewerCursor = null;
+let currentHttpEnvName = (function () {
+  let saved = '';
+  try { saved = localStorage.getItem(httpEnvKey) || ''; } catch (error) { saved = ''; }
+  if (saved && httpEnvNames.indexOf(saved) >= 0) return saved;
+  return httpEnvNames.length ? httpEnvNames[0] : '';
+})();
 let treeFocusIndex = -1;
 let selectionAnchor = null;
 let measuredCharWidth = 0;
@@ -2520,6 +2731,15 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  if ((event.metaKey || event.altKey) && event.key === 'Enter' && isSourceViewerVisible()) {
+    const enterPath = document.getElementById('source-viewer')?.dataset.openPath || '';
+    if (isHttpFile(enterPath)) {
+      event.preventDefault();
+      runHttpAtCaret();
+      return;
+    }
+  }
+
   if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowDown') {
     event.preventDefault();
     if (isSourceViewerVisible()) goToSymbolUnderCursor();
@@ -2609,6 +2829,7 @@ searchInput?.addEventListener('input', () => {
   if (openPath) openSourceFile(openPath, false);
 });
 
+populateHttpEnvSelect();
 const restored = restoreUiState();
 if (!restored) {
   const initial = location.hash.match(/^#hunk-(\\d+)$/);
@@ -2896,6 +3117,19 @@ function sourceLinesForRows(file, rows) {
 
 function handleSourceClick(event) {
   const target = event.target;
+  const runBtn = target?.closest?.('.http-run');
+  if (runBtn) {
+    event.preventDefault();
+    runHttpRequest(Number(runBtn.dataset.req));
+    return;
+  }
+  const respToggle = target?.closest?.('.http-resp-toggle');
+  if (respToggle) {
+    event.preventDefault();
+    const panel = respToggle.closest('.http-response')?.querySelector('.http-resp-headers');
+    if (panel) panel.classList.toggle('hidden');
+    return;
+  }
   const row = target?.closest?.('.source-row');
   if (!row) return;
   clearTreeFocus();
@@ -3133,6 +3367,7 @@ function openSourceFile(path, shouldSwitch = true) {
   if (!file.embedded) {
     body.className = 'source-body empty';
     body.textContent = file.skippedReason ? 'Source preview unavailable: ' + file.skippedReason + '.' : 'Source preview unavailable.';
+    document.getElementById('http-env-select')?.classList.add('hidden');
     if (shouldSwitch) showSourceView();
     return;
   }
@@ -3140,8 +3375,260 @@ function openSourceFile(path, shouldSwitch = true) {
     viewerCursor = { path, lineIndex: 0, column: 0, targetLine: -1 };
   }
   body.className = 'source-body';
-  body.innerHTML = renderSourceTable(file, searchInput?.value || '');
+  const httpEnvSelect = document.getElementById('http-env-select');
+  if (isHttpFile(path)) {
+    body.innerHTML = renderHttpTable(file);
+    if (httpEnvSelect) httpEnvSelect.classList.toggle('hidden', httpEnvNames.length === 0);
+  } else {
+    body.innerHTML = renderSourceTable(file, searchInput?.value || '');
+    if (httpEnvSelect) httpEnvSelect.classList.add('hidden');
+  }
   if (shouldSwitch) showSourceView();
+}
+
+function isHttpFile(path) {
+  return /\.(http|rest)$/i.test(path || '');
+}
+
+function currentHttpEnv() {
+  return httpEnvironments[currentHttpEnvName] || {};
+}
+
+function applyHttpVars(text, env) {
+  return String(text == null ? '' : text).replace(/\{\{\s*([\w.$-]+)\s*\}\}/g, function (whole, name) {
+    if (env && Object.prototype.hasOwnProperty.call(env, name)) return env[name];
+    return whole;
+  });
+}
+
+// Parses an IntelliJ-style .http file into a list of requests. Each request
+// tracks the line of its request line (for the gutter Run button) and the line
+// span it covers (for placing the inline response and for Cmd/Alt+Enter).
+function parseHttpRequests(content) {
+  const methods = { GET: 1, POST: 1, PUT: 1, PATCH: 1, DELETE: 1, HEAD: 1, OPTIONS: 1, TRACE: 1, CONNECT: 1 };
+  const lines = String(content).split(/\r?\n/);
+  const requests = [];
+  let curr = null;
+  let phase = 'pre';
+  function flush() {
+    if (curr && curr.url) {
+      curr.body = curr.bodyLines.join('\n').replace(/\s+$/, '');
+      requests.push(curr);
+    }
+  }
+  function start(boundaryLine, name, index) {
+    return { name: name, method: '', url: '', headers: [], bodyLines: [], startLine: -1, endLine: index, boundaryLine: boundaryLine };
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+    if (trimmed.indexOf('###') === 0) {
+      flush();
+      curr = start(i, trimmed.replace(/^#+/, '').trim(), i);
+      phase = 'pre';
+      continue;
+    }
+    if (!curr) {
+      curr = start(-1, '', i);
+      phase = 'pre';
+    }
+    curr.endLine = i;
+    if (phase === 'pre') {
+      if (trimmed === '') continue;
+      if (trimmed.indexOf('#') === 0 || trimmed.indexOf('//') === 0) continue;
+      const sp = trimmed.indexOf(' ');
+      const firstToken = sp >= 0 ? trimmed.slice(0, sp) : trimmed;
+      if (sp >= 0 && methods[firstToken.toUpperCase()]) {
+        curr.method = firstToken.toUpperCase();
+        curr.url = trimmed.slice(sp + 1).replace(/\s+HTTP\/[\d.]+\s*$/i, '').trim();
+      } else {
+        curr.method = 'GET';
+        curr.url = trimmed.replace(/\s+HTTP\/[\d.]+\s*$/i, '').trim();
+      }
+      curr.startLine = i;
+      phase = 'headers';
+      continue;
+    }
+    if (phase === 'headers') {
+      if (trimmed === '') { phase = 'body'; continue; }
+      if (trimmed.indexOf('#') === 0 || trimmed.indexOf('//') === 0) continue;
+      const colon = rawLine.indexOf(':');
+      if (colon > 0) curr.headers.push({ name: rawLine.slice(0, colon).trim(), value: rawLine.slice(colon + 1).trim() });
+      continue;
+    }
+    curr.bodyLines.push(rawLine);
+  }
+  flush();
+  return requests;
+}
+
+function renderHttpTable(file) {
+  const requests = parseHttpRequests(file.content);
+  httpRequestsByPath.set(file.path, requests);
+  const env = currentHttpEnv();
+  const lines = String(file.content).split(/\r?\n/);
+  const runAtLine = {};
+  const respAfterLine = {};
+  requests.forEach(function (req, idx) {
+    if (req.startLine >= 0) runAtLine[req.startLine] = idx;
+    respAfterLine[req.endLine] = idx;
+  });
+  let rows = '';
+  lines.forEach(function (line, index) {
+    const hasRun = Object.prototype.hasOwnProperty.call(runAtLine, index);
+    const reqIdx = hasRun ? runAtLine[index] : -1;
+    const gutter = hasRun
+      ? '<button type="button" class="http-run" data-req="' + reqIdx + '" title="Run request (Cmd/Alt+Enter)" aria-label="Run request">&#9654;</button>'
+      : '';
+    rows += '<tr class="source-row http-row' + (hasRun ? ' http-request-line' : '') + '" data-line-index="' + index + '">'
+      + '<td class="num http-gutter">' + gutter + '<span class="num-text">' + (index + 1) + '</span></td>'
+      + '<td class="source-code">' + highlightHttpLine(line, env) + '</td>'
+      + '</tr>';
+    if (Object.prototype.hasOwnProperty.call(respAfterLine, index)) {
+      const rIdx = respAfterLine[index];
+      rows += '<tr class="http-response-row"><td class="num"></td><td class="source-code"><div class="http-response hidden" id="http-resp-' + rIdx + '"></div></td></tr>';
+    }
+  });
+  return '<table class="source-table http-table"><tbody>' + rows + '</tbody></table>';
+}
+
+function highlightHttpLine(line, env) {
+  const trimmed = line.trim();
+  if (trimmed.indexOf('###') === 0) return '<span class="http-sep">' + escapeHtml(line) + '</span>';
+  if (trimmed.indexOf('#') === 0 || trimmed.indexOf('//') === 0) return '<span class="tok-comment">' + escapeHtml(line) + '</span>';
+  let html = escapeHtml(line);
+  html = html.replace(/^(\s*)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT)(\s)/, function (whole, pre, method, post) {
+    return pre + '<span class="http-method">' + method + '</span>' + post;
+  });
+  html = html.replace(/\{\{\s*([\w.$-]+)\s*\}\}/g, function (whole, name) {
+    const known = env && Object.prototype.hasOwnProperty.call(env, name);
+    const title = known ? String(env[name]) : 'Undefined variable';
+    return '<span class="http-var ' + (known ? 'known' : 'unknown') + '" title="' + escapeHtml(title) + '">' + escapeHtml(whole) + '</span>';
+  });
+  return html;
+}
+
+function sendHttp(request) {
+  if (window.monacoriHttp && typeof window.monacoriHttp.send === 'function') {
+    return Promise.resolve(window.monacoriHttp.send(request));
+  }
+  return fetch('/__http_send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  }).then(function (response) { return response.json(); });
+}
+
+function runHttpRequest(reqIndex) {
+  const path = document.getElementById('source-viewer')?.dataset.openPath || '';
+  const requests = httpRequestsByPath.get(path);
+  if (!requests || !requests[reqIndex]) return;
+  const req = requests[reqIndex];
+  const env = currentHttpEnv();
+  const headers = {};
+  req.headers.forEach(function (header) {
+    const key = applyHttpVars(header.name, env);
+    if (key) headers[key] = applyHttpVars(header.value, env);
+  });
+  const resolved = {
+    method: req.method || 'GET',
+    url: applyHttpVars(req.url, env),
+    headers: headers,
+    body: req.body ? applyHttpVars(req.body, env) : undefined,
+  };
+  const target = document.getElementById('http-resp-' + reqIndex);
+  if (target) {
+    target.className = 'http-response loading';
+    target.textContent = resolved.method + ' ' + resolved.url;
+  }
+  sendHttp(resolved).then(function (result) {
+    if (target) renderHttpResponse(target, result);
+  }).catch(function (error) {
+    if (target) {
+      target.className = 'http-response error';
+      target.innerHTML = '<div class="http-resp-head"><span class="http-status bad">Failed</span></div><pre class="http-resp-body">' + escapeHtml(String(error && error.message ? error.message : error)) + '</pre>';
+    }
+  });
+}
+
+function runHttpAtCaret() {
+  const path = document.getElementById('source-viewer')?.dataset.openPath || '';
+  const requests = httpRequestsByPath.get(path);
+  if (!requests || !requests.length) return;
+  const caretLine = viewerCursor && viewerCursor.path === path ? viewerCursor.lineIndex : 0;
+  let chosen = -1;
+  for (let i = 0; i < requests.length; i++) {
+    const req = requests[i];
+    const from = req.boundaryLine >= 0 ? req.boundaryLine : req.startLine;
+    if (from <= caretLine && caretLine <= req.endLine) { chosen = i; break; }
+    if (from <= caretLine) chosen = i;
+  }
+  if (chosen < 0) chosen = 0;
+  runHttpRequest(chosen);
+}
+
+function renderHttpResponse(target, result) {
+  if (!result || !result.ok) {
+    target.className = 'http-response error';
+    const message = result && result.error ? result.error : 'Request failed';
+    target.innerHTML = '<div class="http-resp-head"><span class="http-status bad">Failed</span></div><pre class="http-resp-body">' + escapeHtml(message) + '</pre>';
+    return;
+  }
+  target.className = 'http-response';
+  const status = Number(result.status) || 0;
+  const statusClass = status >= 200 && status < 300 ? 'ok' : (status >= 400 ? 'bad' : 'warn');
+  const headers = result.headers || {};
+  const headerKeys = Object.keys(headers).sort();
+  const headerHtml = headerKeys.map(function (key) {
+    return '<div class="http-h"><span class="http-h-k">' + escapeHtml(key) + '</span><span class="http-h-v">' + escapeHtml(String(headers[key])) + '</span></div>';
+  }).join('');
+  let contentType = '';
+  for (let i = 0; i < headerKeys.length; i++) {
+    if (headerKeys[i].toLowerCase() === 'content-type') { contentType = String(headers[headerKeys[i]]); break; }
+  }
+  const bodyText = result.body == null ? '' : String(result.body);
+  const bodyHtml = formatHttpBody(bodyText, contentType);
+  target.innerHTML =
+    '<div class="http-resp-head">'
+    + '<span class="http-status ' + statusClass + '">' + status + (result.statusText ? ' ' + escapeHtml(result.statusText) : '') + '</span>'
+    + '<span class="http-resp-meta">' + (Number(result.durationMs) || 0) + ' ms</span>'
+    + '<span class="http-resp-meta">' + formatBytes(bodyText.length) + '</span>'
+    + (headerKeys.length ? '<button type="button" class="http-resp-toggle">Headers (' + headerKeys.length + ')</button>' : '')
+    + '</div>'
+    + '<div class="http-resp-headers hidden">' + headerHtml + '</div>'
+    + '<pre class="http-resp-body">' + bodyHtml + '</pre>';
+}
+
+function formatHttpBody(text, contentType) {
+  if (!text) return '<span class="http-resp-empty">(empty body)</span>';
+  const looksJson = /json/i.test(contentType) || /^[\[{]/.test(text.trim());
+  if (looksJson) {
+    try {
+      const pretty = JSON.stringify(JSON.parse(text), null, 2);
+      return pretty.split(/\r?\n/).map(function (line) { return highlightLine(line, 'json'); }).join('\n');
+    } catch (error) {}
+  }
+  return escapeHtml(text);
+}
+
+function populateHttpEnvSelect() {
+  const select = document.getElementById('http-env-select');
+  if (!select) return;
+  let opts = '<option value="">No environment</option>';
+  httpEnvNames.forEach(function (name) {
+    opts += '<option value="' + escapeHtml(name) + '"' + (name === currentHttpEnvName ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+  });
+  select.innerHTML = opts;
+  select.addEventListener('change', function () {
+    currentHttpEnvName = select.value;
+    try { localStorage.setItem(httpEnvKey, currentHttpEnvName); } catch (error) {}
+    const path = document.getElementById('source-viewer')?.dataset.openPath || '';
+    if (path && isHttpFile(path)) {
+      const file = sourceByPath.get(path);
+      const body = document.getElementById('source-body');
+      if (file && body) body.innerHTML = renderHttpTable(file);
+    }
+  });
 }
 
 function renderSourceTable(file, query) {
@@ -3496,6 +3983,7 @@ function languageForPath(path: string): string {
   if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return "yaml";
   if (lower.endsWith(".toml")) return "toml";
   if (lower.endsWith(".sql")) return "sql";
+  if (lower.endsWith(".http") || lower.endsWith(".rest")) return "http";
   return "text";
 }
 

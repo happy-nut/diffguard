@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, Menu, nativeImage } from "electron";
-import { buildDiffReview } from "./cli.js";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
+import { buildDiffReview, performHttpRequest, type HttpSendRequest } from "./cli.js";
 
 type AppOptions = {
   root: string;
@@ -19,7 +19,10 @@ const WATCH_INTERVAL_MS = 1000;
 
 app.setName("monacori");
 
+ipcMain.handle("monacori:http-send", (_event, request: HttpSendRequest) => performHttpRequest(request));
+
 const iconPath = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "icon.png");
+const preloadPath = join(dirname(fileURLToPath(import.meta.url)), "preload.cjs");
 
 const options = parseArgs(process.argv.slice(2));
 let mainWindow: BrowserWindow | undefined;
@@ -55,6 +58,7 @@ app.whenReady().then(async () => {
     backgroundColor: "#2b2b2b",
     autoHideMenuBar: true,
     webPreferences: {
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
