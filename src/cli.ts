@@ -83,6 +83,7 @@ type SourceFile = {
   size: number;
   changed: boolean;
   embedded: boolean;
+  changedLines: number[];
   signature: string;
   skippedReason?: string;
 };
@@ -128,8 +129,8 @@ const STATE_FILE = "state.md";
 const DECISIONS_FILE = "decisions.md";
 const AGENT_SNIPPET_FILE = "agent-snippet.md";
 const SOURCE_MAX_FILE_BYTES = 220_000;
-const SOURCE_MAX_TOTAL_BYTES = 5_000_000;
-const SOURCE_MAX_FILES = 1200;
+const SOURCE_MAX_TOTAL_BYTES = 50_000_000;
+const SOURCE_MAX_FILES = 20000;
 const nodeRequire = createRequire(import.meta.url);
 
 const packageVersion: string = (() => {
@@ -910,6 +911,7 @@ function renderDiffHtml(input: {
     '<main class="content">',
     '<section id="diff-view" class="hidden">',
     '<div class="toolbar">',
+    '<div class="breadcrumb" id="diff-breadcrumb"></div>',
     `<div class="review-status"><span>${input.files.length} files</span><span>${totalHunks} hunks</span><span>${embeddedFiles}/${input.sourceFiles.length} indexed</span><span class="live-status ${input.watch ? "watching" : ""}" id="live-status">${input.watch ? "watching" : escapeHtml(input.generatedAt ?? new Date().toISOString())}</span></div>`,
     `<div class="counter"><span id="file-counter" class="file-counter"></span><span id="hunk-counter">0</span> / ${totalHunks}</div>`,
     "</div>",
@@ -949,41 +951,30 @@ function renderDiffTree(files: DiffFile[]): string {
     return '<div class="empty-nav">No changed files</div>';
   }
 
-  const root: DiffTreeNode = { name: "", path: "", children: new Map() };
   let hunkIndex = 0;
-
-  files.forEach((file, fileIndex) => {
-    const parts = file.displayPath.split("/").filter(Boolean);
-    let node = root;
-    let currentPath = "";
-    for (const part of parts.slice(0, -1)) {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      let child = node.children.get(part);
-      if (!child) {
-        child = { name: part, path: currentPath, children: new Map() };
-        node.children.set(part, child);
-      }
-      node = child;
-    }
-
-    const leafName = parts[parts.length - 1] ?? file.displayPath;
+  const rows = files.map((file, fileIndex) => {
     const firstHunk = hunkIndex;
     hunkIndex += file.hunks.length;
-    node.children.set(`${leafName}\0${fileIndex}`, {
-      name: leafName,
-      path: file.displayPath,
-      children: new Map(),
-      file: {
-        index: fileIndex,
-        firstHunk,
-        hunkCount: file.hunks.length,
-        status: file.status,
-        displayPath: file.displayPath,
-      },
-    });
+    let adds = 0;
+    let dels = 0;
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        if (line.kind === "add") adds += 1;
+        else if (line.kind === "delete") dels += 1;
+      }
+    }
+    const slash = file.displayPath.lastIndexOf("/");
+    const name = slash >= 0 ? file.displayPath.slice(slash + 1) : file.displayPath;
+    const dir = slash > 0 ? file.displayPath.slice(0, slash) : "";
+    return [
+      `<a class="file-link change-row" href="#file-${fileIndex}" data-hunk="${firstHunk}" data-file="${escapeAttr(file.displayPath)}">`,
+      `<span class="status status-${escapeAttr(file.status)}">${escapeHtml(file.status)}</span>`,
+      `<span class="change-name"><span class="path" title="${escapeAttr(file.displayPath)}">${escapeHtml(name)}</span>${dir ? `<span class="change-dir">${escapeHtml(dir)}</span>` : ""}</span>`,
+      `<span class="diffstat">${adds ? `<span class="adds">+${adds}</span>` : ""}${dels ? `<span class="dels">−${dels}</span>` : ""}</span>`,
+      "</a>",
+    ].join("");
   });
-
-  return `<nav class="tree">${renderTreeChildren(root, 0)}</nav>`;
+  return `<nav class="tree changes-flat">${rows.join("")}</nav>`;
 }
 
 function renderTreeChildren(node: DiffTreeNode, depth: number): string {
@@ -1277,6 +1268,17 @@ function collectSourceFiles(diffFiles: DiffFile[]): SourceFile[] {
       .map((file) => file.displayPath)
       .filter((path) => path && path !== "/dev/null"),
   );
+  const changedLinesByPath = new Map<string, number[]>();
+  for (const file of diffFiles) {
+    if (!file.displayPath || file.displayPath === "/dev/null") continue;
+    const nums: number[] = [];
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        if (line.kind === "add" && typeof line.newLine === "number") nums.push(line.newLine);
+      }
+    }
+    changedLinesByPath.set(file.displayPath, nums);
+  }
   const paths = new Set<string>();
   const gitFiles = git(process.cwd(), ["ls-files", "--cached", "--others", "--exclude-standard"]);
   for (const file of gitFiles.split(/\r?\n/)) {
@@ -1305,6 +1307,7 @@ function collectSourceFiles(diffFiles: DiffFile[]): SourceFile[] {
       size: 0,
       changed: changed.has(path),
       embedded: false,
+      changedLines: changedLinesByPath.get(path) || [],
       signature: "",
     };
 
@@ -1510,7 +1513,7 @@ body {
   background: var(--bg);
   font: 13px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 10px; }
+.tabs { display: none; }
 .tab, .plain-button {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1642,6 +1645,8 @@ body {
 .d2h-diff-table tr.hunk.active td, .d2h-diff-table tr.hunk-peer.active td {
   box-shadow: none;
 }
+.d2h-diff-table tr.diff-active-row td { background: rgba(74, 136, 199, 0.16) !important; }
+.d2h-diff-table tr.diff-active-row td.d2h-code-side-linenumber { box-shadow: inset 2px 0 0 var(--active); }
 .file-counter:not(:empty) { margin-right: 14px; color: var(--muted); }
 .d2h-file-collapse {
   display: flex;
@@ -1670,15 +1675,15 @@ body {
 .d2h-file-collapse-input {
   display: none;
 }
-.tree { display: grid; gap: 2px; font-family: Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.tree-dir { display: grid; gap: 2px; }
+.tree { display: grid; gap: 1px; font-size: 11.5px; font-family: Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.tree-dir { display: grid; gap: 1px; }
 .tree-dir summary {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
   gap: 4px;
-  min-height: 24px;
-  padding: 3px 5px 3px calc(7px + (var(--depth) * 16px));
+  min-height: 18px;
+  padding: 1px 5px 1px calc(7px + (var(--depth) * 14px));
   color: var(--muted);
   border-radius: 6px;
   cursor: default;
@@ -1694,7 +1699,7 @@ body {
   color: var(--muted);
   transition: transform 120ms ease;
 }
-.file-link.tree-file { padding-left: calc(8px + (var(--depth) * 16px)); }
+.file-link.tree-file { padding-left: calc(8px + (var(--depth) * 14px)); }
 .tree-focus { box-shadow: inset 0 0 0 1px var(--active); border-radius: 6px; }
 summary.tree-focus { background: var(--bg); }
 .file-link {
@@ -1702,8 +1707,8 @@ summary.tree-focus { background: var(--bg); }
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
-  min-height: 24px;
-  padding: 5px 6px;
+  min-height: 18px;
+  padding: 1px 6px;
   color: var(--text);
   text-decoration: none;
   border-radius: 6px;
@@ -1719,6 +1724,12 @@ summary.tree-focus { background: var(--bg); }
 .file-link.viewed:hover, .file-link.viewed.active { opacity: 1; }
 .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .count { color: var(--muted); font-size: 11px; }
+.change-name { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; }
+.change-dir { color: var(--muted); opacity: 0.5; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.diffstat { display: flex; gap: 6px; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diffstat .adds { color: #6ab04c; }
+.diffstat .dels { color: #cf6679; }
+.file-link.viewed .status::after { content: '✓'; margin-left: 4px; color: #6ab04c; font-weight: 700; }
 .status {
   display: inline-grid;
   place-items: center;
@@ -1752,6 +1763,19 @@ summary.tree-focus { background: var(--bg); }
   border-bottom: 1px solid var(--border);
 }
 h1 { margin: 0; font-size: 18px; }
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  font: 13px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.crumb { color: var(--muted); }
+.crumb-leaf { color: var(--text); font-weight: 500; }
+.crumb-sep { color: var(--muted); opacity: 0.55; }
 .review-status {
   display: flex;
   align-items: center;
@@ -1811,10 +1835,7 @@ h1 { margin: 0; font-size: 18px; }
   line-height: 1.45;
 }
 .source-row.search-hit .source-code { background: color-mix(in srgb, var(--active) 14%, transparent); }
-.source-row.cursor-line .source-code {
-  background: color-mix(in srgb, var(--active) 10%, transparent);
-  box-shadow: inset 2px 0 0 var(--active);
-}
+.source-row.changed-line .source-code { background: color-mix(in srgb, var(--active) 9%, transparent); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--active) 55%, transparent); }
 .source-row.symbol-target .source-code {
   background: color-mix(in srgb, var(--active) 18%, transparent);
 }
@@ -2100,19 +2121,73 @@ function applyViewedState() {
   });
 }
 
+let activeDiffRow = null;
+function firstCodeRowOfHunk(hunkRow) {
+  let row = hunkRow.nextElementSibling;
+  let firstRow = null;
+  while (row && !row.classList.contains('hunk') && !row.classList.contains('hunk-peer')) {
+    if (row.querySelector && row.querySelector('.d2h-code-side-line')) {
+      if (!firstRow) firstRow = row;
+      if (row.querySelector('.d2h-ins, .d2h-del, ins, del')) return row;
+    }
+    row = row.nextElementSibling;
+  }
+  return firstRow || hunkRow;
+}
+function focusDiffRow(row) {
+  if (activeDiffRow) activeDiffRow.classList.remove('diff-active-row');
+  activeDiffRow = row || null;
+  if (!row) return;
+  row.classList.add('diff-active-row');
+  const cell = row.querySelector('.d2h-code-line-ctn');
+  const container = document.getElementById('diff2html-container');
+  if (!cell || !container) return;
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    container.focus({ preventScroll: true });
+  } catch (e) {}
+}
+
+function renderBreadcrumb(container, path) {
+  if (!container) return;
+  container.textContent = '';
+  const parts = (path || '').split('/').filter(Boolean);
+  parts.forEach((seg, i) => {
+    if (i > 0) {
+      const sep = document.createElement('span');
+      sep.className = 'crumb-sep';
+      sep.textContent = '›';
+      container.appendChild(sep);
+    }
+    const span = document.createElement('span');
+    span.className = i === parts.length - 1 ? 'crumb crumb-leaf' : 'crumb';
+    span.textContent = seg;
+    container.appendChild(span);
+  });
+}
+
 function setActive(index, shouldScroll = true) {
   if (hunks.length === 0) return;
   current = ((index % hunks.length) + hunks.length) % hunks.length;
   document.getElementById('source-viewer')?.classList.add('hidden');
   document.getElementById('diff-view')?.classList.remove('hidden');
+  setTab('changes');
   const active = hunks[current];
   const file = active.dataset.file;
   showOnlyFile(file);
   hunks.forEach((hunk, i) => hunk.classList.toggle('active', i === current));
   hunkPeers.forEach((hunk) => hunk.classList.toggle('active', Number(hunk.dataset.hunkIndex) === current));
   links.forEach((link) => link.classList.toggle('active', link.dataset.file === file));
+  renderBreadcrumb(document.getElementById('diff-breadcrumb'), file);
   document.getElementById('hunk-counter').textContent = String(current + 1);
-  if (shouldScroll) active.scrollIntoView({ block: 'start' });
+  const targetRow = firstCodeRowOfHunk(active);
+  focusDiffRow(targetRow);
+  if (shouldScroll) targetRow.scrollIntoView({ block: 'center' });
   if (file) rememberRecent(file, 'change');
   history.replaceState(null, '', '#hunk-' + current);
 }
@@ -2131,7 +2206,14 @@ function showOnlyFile(fileName) {
 }
 
 function next(delta) {
-  setActive(current < 0 ? initialHunkForNavigation(delta) : current + delta);
+  if (hunks.length === 0) return;
+  let idx = current < 0 ? initialHunkForNavigation(delta) : current + delta;
+  for (let step = 0; step < hunks.length; step++) {
+    const norm = ((idx % hunks.length) + hunks.length) % hunks.length;
+    if (!isFileViewed(hunks[norm].dataset.file || '')) { setActive(norm); return; }
+    idx += delta;
+  }
+  setActive((((current < 0 ? 0 : current + delta) % hunks.length) + hunks.length) % hunks.length);
 }
 
 function initialHunkForNavigation(delta) {
@@ -2403,7 +2485,14 @@ document.addEventListener('keydown', (event) => {
 
   if ((event.metaKey || event.ctrlKey) && event.key === '1') {
     event.preventDefault();
-    focusTree(treeFocusIndex < 0 ? 0 : treeFocusIndex);
+    setTab('files');
+    focusTree(0);
+    return;
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key === '0') {
+    event.preventDefault();
+    setTab('changes');
+    focusTree(0);
     return;
   }
   if (treeFocusIndex >= 0 && handleTreeKey(event)) return;
@@ -2615,6 +2704,7 @@ function setTab(name) {
 function showDiffView(shouldScroll) {
   document.getElementById('source-viewer')?.classList.add('hidden');
   document.getElementById('diff-view')?.classList.remove('hidden');
+  setTab('changes');
   if (current < 0 && hunks.length) {
     setActive(0, shouldScroll);
     return;
@@ -3031,7 +3121,7 @@ function openSourceFile(path, shouldSwitch = true) {
   rememberRecent(path, 'source');
   document.getElementById('source-viewer').dataset.openPath = path;
   sourceLinks.forEach((link) => link.classList.toggle('active', link.dataset.sourceFile === path));
-  document.getElementById('source-title').textContent = path;
+  renderBreadcrumb(document.getElementById('source-title'), path);
   const meta = [
     file.language || 'text',
     formatBytes(file.size || 0),
@@ -3058,13 +3148,16 @@ function renderSourceTable(file, query) {
   const normalizedQuery = query.trim().toLowerCase();
   const lines = file.content.split(/\r?\n/);
   const cursor = viewerCursor && viewerCursor.path === file.path ? viewerCursor : null;
+  const changedSet = new Set(file.changedLines || []);
   const rows = lines.map((line, index) => {
     const hit = normalizedQuery.length > 0 && line.toLowerCase().includes(normalizedQuery);
     const isCursorLine = Boolean(cursor && cursor.lineIndex === index);
     const isSymbolTarget = Boolean(cursor && cursor.targetLine === index);
+    const isChanged = changedSet.has(index + 1);
     const classes = [
       'source-row',
       hit ? 'search-hit' : '',
+      isChanged ? 'changed-line' : '',
       isCursorLine ? 'cursor-line' : '',
       isSymbolTarget ? 'symbol-target' : '',
     ].filter(Boolean).join(' ');

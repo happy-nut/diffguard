@@ -101,7 +101,7 @@ function writeReviewFile(input: AppOptions): { signature: string } {
     staged: input.staged,
     includeUntracked: input.includeUntracked,
     context: input.context,
-    title: "monacori review",
+    title: "monacori",
   });
   writeFileSync(reviewPath(), build.html);
   return { signature: build.signature };
