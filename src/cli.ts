@@ -132,6 +132,15 @@ const SOURCE_MAX_TOTAL_BYTES = 5_000_000;
 const SOURCE_MAX_FILES = 1200;
 const nodeRequire = createRequire(import.meta.url);
 
+const packageVersion: string = (() => {
+  try {
+    const pkg = nodeRequire("../package.json") as { version?: unknown };
+    return typeof pkg.version === "string" ? pkg.version : "";
+  } catch {
+    return "";
+  }
+})();
+
 export function main(): void {
   const rawArgs = process.argv.slice(2);
   const [command, ...args] = rawArgs;
@@ -914,6 +923,7 @@ function renderDiffHtml(input: {
     '<div id="source-body" class="source-body empty">Select a file from the Files tab.</div>',
     "</section>",
     "</main>",
+    '<div id="update-badge" class="update-badge hidden" title="npm install -g @happy-nut/monacori"></div>',
     '<div id="quick-open" class="quick-open hidden" role="dialog" aria-modal="true" aria-label="Quick open">',
     '<div class="quick-open-panel">',
     '<div class="quick-open-title"><span id="quick-open-mode">Search files</span></div>',
@@ -925,6 +935,7 @@ function renderDiffHtml(input: {
     `<script type="application/json" id="review-meta" data-watch="${input.watch ? "true" : "false"}" data-signature="${escapeAttr(input.signature ?? "")}" data-generated-at="${escapeAttr(input.generatedAt ?? "")}">{}</script>`,
     `<script type="application/json" id="source-files-data">${jsonForScript(input.sourceFiles)}</script>`,
     `<script type="application/json" id="file-state-data">${jsonForScript(input.fileStates)}</script>`,
+    `<script>window.__MONACORI_VERSION__=${JSON.stringify(packageVersion)};</script>`,
     "<script>",
     diffScript(),
     "</script>",
@@ -1511,6 +1522,21 @@ body {
 }
 .tab.active, .plain-button:hover { border-color: var(--active); color: var(--active); }
 .hidden { display: none !important; }
+.update-badge {
+  position: fixed;
+  left: 12px;
+  bottom: 10px;
+  z-index: 60;
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 11px;
+  border-radius: 11px;
+  background: var(--active);
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
 .diff2html-container { min-width: 0; caret-color: var(--active); }
 #diff2html-container[contenteditable] { outline: none; }
 #diff2html-container [contenteditable="false"] { caret-color: transparent; }
@@ -1801,7 +1827,7 @@ h1 { margin: 0; font-size: 18px; }
   display: inline-block;
   width: 2px;
   height: 1.25em;
-  margin: -1px 0;
+  margin: -1px -1px;
   background: var(--active);
   vertical-align: text-bottom;
   pointer-events: none;
@@ -2126,7 +2152,7 @@ function firstHunkForPath(path) {
 function openQuickOpen(mode) {
   if (!quickOpen || !quickInput || !quickModeLabel) return;
   quickMode = mode;
-  quickModeLabel.textContent = mode === 'recent' ? 'Recent files' : 'Search files';
+  quickModeLabel.textContent = mode === 'recent' ? 'Recent files' : mode === 'content' ? 'Find in Files' : 'Search files';
   quickOpen.classList.remove('hidden');
   quickInput.value = '';
   renderQuickOpenResults();
@@ -2171,6 +2197,10 @@ function renderQuickOpenResults() {
     .filter((item) => quickMode !== 'recent' || query.length > 0 || item.recent)
     .filter((item) => {
       if (query.length === 0) return true;
+      if (quickMode === 'content') {
+        const file = sourceByPath.get(item.path);
+        return Boolean(file && file.embedded && file.content.toLowerCase().includes(query));
+      }
       return (item.path + '\n' + item.name + '\n' + item.detail).toLowerCase().includes(query);
     })
     .sort((a, b) => scoreQuickItem(a, query) - scoreQuickItem(b, query) || a.path.localeCompare(b.path))
@@ -2229,7 +2259,7 @@ function openQuickItem(item) {
   if (!item) return;
   closeQuickOpen();
   rememberRecent(item.path, item.kind);
-  if (item.kind === 'source' && sourceByPath.has(item.path)) {
+  if (sourceByPath.has(item.path)) {
     openSourceFile(item.path);
     return;
   }
@@ -2346,7 +2376,7 @@ function handleTreeKey(event) {
   if (event.key === 'ArrowUp') { event.preventDefault(); focusTree(treeFocusIndex - 1); return true; }
   if (event.key === 'Enter') {
     event.preventDefault();
-    if (row && row.classList.contains('file-link')) row.click();
+    if (row && row.classList.contains('file-link')) { row.click(); clearTreeFocus(); }
     else if (isFolder && row.parentElement) row.parentElement.open = !row.parentElement.open;
     return true;
   }
@@ -2390,6 +2420,11 @@ document.addEventListener('keydown', (event) => {
     lastShiftAt = now;
   }
 
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
+    event.preventDefault();
+    openQuickOpen('content');
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'e') {
     event.preventDefault();
     openQuickOpen('recent');
@@ -2398,7 +2433,22 @@ document.addEventListener('keydown', (event) => {
 
   if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowDown') {
     event.preventDefault();
-    goToSymbolUnderCursor();
+    if (isSourceViewerVisible()) goToSymbolUnderCursor();
+    else openDiffFileAtCaret();
+    return;
+  }
+
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && isSourceViewerVisible() && viewerCursor) {
+    event.preventDefault();
+    const lineEdgeFile = sourceByPath.get(viewerCursor.path);
+    if (lineEdgeFile && lineEdgeFile.embedded) {
+      const lineEdgeLines = lineEdgeFile.content.split(/\r?\n/);
+      const lineEdgeCol = event.key === 'ArrowLeft' ? 0 : (lineEdgeLines[viewerCursor.lineIndex] || '').length;
+      if (event.shiftKey) { if (!selectionAnchor) selectionAnchor = { lineIndex: viewerCursor.lineIndex, column: viewerCursor.column }; }
+      else selectionAnchor = null;
+      setSourceCursor(viewerCursor.path, viewerCursor.lineIndex, lineEdgeCol, true, -1);
+      applySourceSelection();
+    }
     return;
   }
 
@@ -2514,6 +2564,8 @@ window.addEventListener('beforeunload', saveUiState);
   container.setAttribute('aria-readonly', 'true');
   container.querySelectorAll('.d2h-code-side-linenumber, .d2h-code-linenumber, .d2h-code-line-prefix').forEach((el) => el.setAttribute('contenteditable', 'false'));
   const block = (event) => event.preventDefault();
+  container.addEventListener('focusin', () => clearTreeFocus());
+  container.addEventListener('mousedown', () => clearTreeFocus());
   container.addEventListener('beforeinput', block);
   container.addEventListener('paste', block);
   container.addEventListener('drop', block);
@@ -2524,6 +2576,32 @@ window.addEventListener('beforeunload', saveUiState);
       event.preventDefault();
     }
   });
+})();
+
+(function checkForUpdate() {
+  try { if (sessionStorage.getItem('monacori-update-checked')) return; } catch (e) {}
+  var current = window.__MONACORI_VERSION__ || '';
+  if (!current || typeof fetch !== 'function') return;
+  try { sessionStorage.setItem('monacori-update-checked', '1'); } catch (e) {}
+  var isNewer = function (a, b) {
+    var pa = String(a).split('.'), pb = String(b).split('.');
+    for (var i = 0; i < 3; i++) {
+      var x = parseInt(pa[i], 10) || 0, y = parseInt(pb[i], 10) || 0;
+      if (x > y) return true;
+      if (x < y) return false;
+    }
+    return false;
+  };
+  fetch('https://registry.npmjs.org/@happy-nut/monacori/latest', { cache: 'no-store' })
+    .then(function (res) { return res && res.ok ? res.json() : null; })
+    .then(function (data) {
+      if (!data || !data.version || !isNewer(data.version, current)) return;
+      var badge = document.getElementById('update-badge');
+      if (!badge) return;
+      badge.textContent = 'Update available: v' + data.version;
+      badge.classList.remove('hidden');
+    })
+    .catch(function () {});
 })();
 
 function setTab(name) {
@@ -2730,6 +2808,7 @@ function handleSourceClick(event) {
   const target = event.target;
   const row = target?.closest?.('.source-row');
   if (!row) return;
+  clearTreeFocus();
   const viewer = document.getElementById('source-viewer');
   const path = viewer?.dataset.openPath || '';
   const file = sourceByPath.get(path);
@@ -2797,6 +2876,26 @@ function openSourceAt(path, lineIndex, column) {
 function isSourceViewerVisible() {
   const viewer = document.getElementById('source-viewer');
   return Boolean(viewer && !viewer.classList.contains('hidden'));
+}
+
+function openDiffFileAtCaret() {
+  const sel = window.getSelection();
+  const node = sel && sel.anchorNode;
+  const el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;
+  const wrapper = (el && el.closest && el.closest('.d2h-file-wrapper')) || document.querySelector('.d2h-file-wrapper:not(.df-inactive)');
+  if (!wrapper) return;
+  const fileName = (wrapper.querySelector('.d2h-file-name')?.textContent || '').trim();
+  if (!fileName) return;
+  if (!sourceByPath.has(fileName)) { openSourceFile(fileName); return; }
+  let lineIndex = 0;
+  const lineEl = el && el.closest && el.closest('.d2h-code-side-line');
+  if (lineEl) {
+    const row = lineEl.closest('tr');
+    const numEl = row && row.querySelector('.d2h-code-side-linenumber');
+    const num = numEl ? parseInt((numEl.textContent || '').trim(), 10) : NaN;
+    if (Number.isFinite(num)) lineIndex = Math.max(0, num - 1);
+  }
+  setSourceCursor(fileName, lineIndex, 0, true, -1);
 }
 
 function handleSourceCaretKey(event) {
