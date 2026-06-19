@@ -19,6 +19,7 @@
     "bin",
     "dist",
     "assets",
+    "scripts/patch-electron-name.mjs",
     "README.md",
     "LICENSE"
   ],
@@ -28,6 +29,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "icon": "node scripts/gen-icon.mjs",
+    "postinstall": "node scripts/patch-electron-name.mjs",
     "prepare": "npm run build",
     "smoke": "npm run build && node dist/cli.js --help"
   },
