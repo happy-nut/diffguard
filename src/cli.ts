@@ -2144,6 +2144,7 @@ const httpEnvironments = JSON.parse(document.getElementById('http-env-data')?.te
 const httpEnvNames = Object.keys(httpEnvironments);
 const httpEnvKey = 'monacori-http-env:' + location.pathname;
 const httpRequestsByPath = new Map();
+const httpVarsByPath = new Map();
 const sourceByPath = new Map(sourceFiles.map((file) => [file.path, file]));
 const fileSignatureByPath = new Map(fileStates.map((file) => [file.path, file.signature]));
 const searchInput = document.getElementById('review-search');
@@ -3379,6 +3380,7 @@ function parseHttpRequests(content) {
   const methods = { GET: 1, POST: 1, PUT: 1, PATCH: 1, DELETE: 1, HEAD: 1, OPTIONS: 1, TRACE: 1, CONNECT: 1 };
   const lines = String(content).split(/\r?\n/);
   const requests = [];
+  const vars = {};
   let curr = null;
   let phase = 'pre';
   function flush() {
@@ -3407,6 +3409,8 @@ function parseHttpRequests(content) {
     if (phase === 'pre') {
       if (trimmed === '') continue;
       if (trimmed.indexOf('#') === 0 || trimmed.indexOf('//') === 0) continue;
+      const varMatch = /^@([\w.$-]+)\s*=\s*(.*)$/.exec(trimmed);
+      if (varMatch) { vars[varMatch[1]] = varMatch[2].trim(); continue; }
       const sp = trimmed.indexOf(' ');
       const firstToken = sp >= 0 ? trimmed.slice(0, sp) : trimmed;
       if (sp >= 0 && methods[firstToken.toUpperCase()]) {
@@ -3430,13 +3434,15 @@ function parseHttpRequests(content) {
     curr.bodyLines.push(rawLine);
   }
   flush();
-  return requests;
+  return { requests: requests, vars: vars };
 }
 
 function renderHttpTable(file) {
-  const requests = parseHttpRequests(file.content);
+  const parsed = parseHttpRequests(file.content);
+  const requests = parsed.requests;
   httpRequestsByPath.set(file.path, requests);
-  const env = currentHttpEnv();
+  httpVarsByPath.set(file.path, parsed.vars);
+  const env = Object.assign({}, parsed.vars, currentHttpEnv());
   const lines = String(file.content).split(/\r?\n/);
   const runAtLine = {};
   const respAfterLine = {};
@@ -3495,7 +3501,7 @@ function runHttpRequest(reqIndex) {
   const requests = httpRequestsByPath.get(path);
   if (!requests || !requests[reqIndex]) return;
   const req = requests[reqIndex];
-  const env = currentHttpEnv();
+  const env = Object.assign({}, httpVarsByPath.get(path) || {}, currentHttpEnv());
   const headers = {};
   req.headers.forEach(function (header) {
     const key = applyHttpVars(header.name, env);
