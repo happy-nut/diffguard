@@ -11,6 +11,7 @@ type AppOptions = {
   includeUntracked: boolean;
   context: number;
   watch: boolean;
+  ignoreWhitespace: boolean;
 };
 
 const FLOW_DIR = ".monacori";
@@ -50,6 +51,20 @@ app.whenReady().then(async () => {
     submenu: [
       { label: "All questions", accelerator: "CommandOrControl+Shift+/", click: () => sendMerged("q") },
       { label: "All change requests", accelerator: "CommandOrControl+Shift+.", click: () => sendMerged("c") },
+      { type: "separator" },
+      // Whitespace-ignore re-runs git diff with --ignore-all-space and reloads (main-process action,
+      // so a menu checkbox is simpler than a renderer IPC round-trip).
+      {
+        label: "Ignore whitespace",
+        type: "checkbox",
+        checked: options.ignoreWhitespace,
+        accelerator: "CommandOrControl+Shift+W",
+        click: (item) => {
+          options.ignoreWhitespace = item.checked;
+          currentSignature = writeReviewFile(options).signature;
+          mainWindow?.webContents.reloadIgnoringCache();
+        },
+      },
     ],
   });
   menuTemplate.push({ role: "windowMenu" });
@@ -122,6 +137,7 @@ function writeReviewFile(input: AppOptions): { signature: string } {
     includeUntracked: input.includeUntracked,
     context: input.context,
     title: "monacori",
+    ignoreWhitespace: input.ignoreWhitespace,
   });
   writeFileSync(reviewPath(), build.html);
   return { signature: build.signature };
@@ -141,6 +157,7 @@ function parseArgs(args: string[]): AppOptions {
     includeUntracked: args.includes("--include-untracked"),
     context: contextValue ? parsePositiveInteger(contextValue, "--context") : 12,
     watch: !args.includes("--no-watch"),
+    ignoreWhitespace: args.includes("--ignore-whitespace"),
   };
 }
 

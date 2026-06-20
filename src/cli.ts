@@ -345,6 +345,7 @@ function renderDiffReview(args: string[]): void {
   const includeUntracked = args.includes("--include-untracked") || config.diff.includeUntracked;
   const openInBrowser = args.includes("--open");
   const watch = args.includes("--watch");
+  const ignoreWhitespace = args.includes("--ignore-whitespace");
 
   if (watch) {
     serveDiffWatch({
@@ -354,6 +355,7 @@ function renderDiffReview(args: string[]): void {
       context,
       openInBrowser,
       port: readOption(args, "--port"),
+      ignoreWhitespace,
     });
     return;
   }
@@ -367,6 +369,7 @@ function renderDiffReview(args: string[]): void {
     context,
     output,
     title: "monacori diff review",
+    ignoreWhitespace,
   });
 
   if (openInBrowser) {
@@ -593,6 +596,7 @@ export function buildDiffReview(input: {
   context: number;
   title: string;
   watch?: boolean;
+  ignoreWhitespace?: boolean;
 }): DiffReviewBuild {
   if (!isGitRepository(process.cwd())) {
     return {
@@ -608,6 +612,7 @@ export function buildDiffReview(input: {
     staged: input.staged,
     context: input.context,
     includeUntracked: input.includeUntracked,
+    ignoreWhitespace: input.ignoreWhitespace,
   });
   const files = parseUnifiedDiff(diffText);
   const sourceFiles = collectSourceFiles(files);
@@ -632,6 +637,7 @@ export function buildDiffReview(input: {
     title: input.title,
     subtitle: diffSubtitle(input),
     watch: Boolean(input.watch),
+    ignoreWhitespace: Boolean(input.ignoreWhitespace),
     signature,
     generatedAt,
   });
@@ -795,6 +801,7 @@ function createDiffReview(input: {
   context: number;
   output: string;
   title: string;
+  ignoreWhitespace?: boolean;
 }): DiffReviewResult {
   const outputPath = resolve(input.output);
   const build = buildDiffReview({
@@ -803,6 +810,7 @@ function createDiffReview(input: {
     includeUntracked: input.includeUntracked,
     context: input.context,
     title: input.title,
+    ignoreWhitespace: input.ignoreWhitespace,
   });
 
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -822,6 +830,7 @@ function serveDiffWatch(input: {
   context: number;
   openInBrowser: boolean;
   port?: string;
+  ignoreWhitespace?: boolean;
 }): void {
   const host = "127.0.0.1";
   const port = input.port ? parsePositiveInteger(input.port, "--port") : 0;
@@ -832,6 +841,7 @@ function serveDiffWatch(input: {
     context: input.context,
     title: "monacori live diff",
     watch: true,
+    ignoreWhitespace: input.ignoreWhitespace,
   });
 
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
@@ -947,6 +957,7 @@ function renderDiffHtml(input: {
   title: string;
   subtitle: string;
   watch?: boolean;
+  ignoreWhitespace?: boolean;
   signature?: string;
   generatedAt?: string;
 }): string {
@@ -980,7 +991,7 @@ function renderDiffHtml(input: {
     '<section id="diff-view" class="hidden">',
     '<div class="toolbar">',
     '<div class="breadcrumb" id="diff-breadcrumb"></div>',
-    `<div class="review-status"><span>${input.files.length} files</span><span>${totalHunks} hunks</span><span>${embeddedFiles}/${input.sourceFiles.length} indexed</span><span class="live-status ${input.watch ? "watching" : ""}" id="live-status">${input.watch ? "watching" : escapeHtml(input.generatedAt ?? new Date().toISOString())}</span></div>`,
+    `<div class="review-status"><span>${input.files.length} files</span><span>${totalHunks} hunks</span>${input.ignoreWhitespace ? '<span class="ws-ignored" title="Whitespace ignored — Cmd/Ctrl+Shift+W">ws ignored</span>' : ""}<span>${embeddedFiles}/${input.sourceFiles.length} indexed</span><span class="live-status ${input.watch ? "watching" : ""}" id="live-status">${input.watch ? "watching" : escapeHtml(input.generatedAt ?? new Date().toISOString())}</span></div>`,
     `<div class="counter"><span id="file-counter" class="file-counter"></span><span id="hunk-counter">0</span> / ${totalHunks}</div>`,
     "</div>",
     `<div id="diff2html-container" class="diff2html-container">${input.diffHtml || '<div class="empty">No diff to review.</div>'}</div>`,
@@ -1130,8 +1141,10 @@ function readUnifiedDiff(options: {
   staged: boolean;
   context: number;
   includeUntracked: boolean;
+  ignoreWhitespace?: boolean;
 }): string {
   const args = ["diff", "--no-ext-diff", "--find-renames", `--unified=${options.context}`];
+  if (options.ignoreWhitespace) args.push("--ignore-all-space");
   if (options.staged) {
     args.push("--cached");
   } else {
@@ -1707,6 +1720,7 @@ body {
 .d2h-diff-table tr.diff-active-row td { background: rgba(74, 136, 199, 0.16) !important; }
 .d2h-diff-table tr.diff-active-row td.d2h-code-side-linenumber { box-shadow: inset 2px 0 0 var(--active); }
 .file-counter:not(:empty) { margin-right: 14px; color: var(--muted); }
+.review-status .ws-ignored { color: var(--token-tag); border: 1px solid color-mix(in srgb, var(--token-tag) 45%, transparent); border-radius: 999px; padding: 0 7px; }
 .d2h-file-collapse {
   display: flex;
   align-items: center;
