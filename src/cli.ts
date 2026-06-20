@@ -972,7 +972,6 @@ function renderDiffHtml(input: {
     '<aside class="sidebar" aria-label="Review navigation">',
     '<label class="search"><span class="visually-hidden">Search</span><input id="review-search" type="search" placeholder="Search files or code"></label>',
     '<div class="tabs"><button type="button" class="tab" data-tab="changes">Changes</button><button type="button" class="tab active" data-tab="files">Files</button></div>',
-    '<div class="mc-badges" id="mc-badges"></div>',
     `<div class="tab-panel hidden" id="changes-panel">${fileNav}</div>`,
     `<div class="tab-panel" id="files-panel">${sourceNav}</div>`,
     "</aside>",
@@ -1856,6 +1855,7 @@ h1 { margin: 0; font-size: 18px; }
 .source-toolbar { margin-bottom: 0; }
 .source-viewed-toggle.is-viewed { border-color: #6ab04c; color: #6ab04c; }
 .source-viewed-toggle[hidden] { display: none; }
+.source-viewed-toggle { caret-color: transparent; -webkit-user-select: none; user-select: none; }
 .source-file-meta {
   display: flex;
   flex: 1;
@@ -1934,18 +1934,17 @@ h1 { margin: 0; font-size: 18px; }
   border-right: 1px solid var(--border);
   padding: 2px 8px;
 }
-/* Review comments (questions / change-requests) */
-.mc-badges { display: flex; gap: 8px; margin: 8px 0 4px; }
-.mc-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: var(--line); color: var(--muted);
-  padding: 3px 10px; font-size: 12px; cursor: pointer;
-}
-.mc-badge:hover { border-color: var(--active); color: var(--text); }
-.mc-badge b { color: var(--text); font-variant-numeric: tabular-nums; }
-.mc-badge.mc-q b { color: var(--token-number); }
-.mc-badge.mc-c b { color: var(--token-tag); }
+/* Review comments (questions / change-requests) — per-file sidebar count badges (no emoji) */
+.change-row, .source-link { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.mc-file-badge { display: inline-flex; gap: 4px; align-items: center; }
+.mc-fb { font-size: 10px; line-height: 1; padding: 1px 6px; border-radius: 999px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1px solid transparent; }
+.mc-fb-q { color: var(--token-number); background: color-mix(in srgb, var(--token-number) 16%, transparent); border-color: color-mix(in srgb, var(--token-number) 38%, transparent); }
+.mc-fb-c { color: var(--token-tag); background: color-mix(in srgb, var(--token-tag) 16%, transparent); border-color: color-mix(in srgb, var(--token-tag) 38%, transparent); }
+/* Lines kept highlighted while composing a comment on a drag selection */
+.mc-sel-line .d2h-code-side-line { background: color-mix(in srgb, var(--active) 20%, transparent); }
+.source-row.mc-sel-line .source-code { background: color-mix(in srgb, var(--active) 20%, transparent); }
+/* A comment box "selected" while navigating with arrows (caret hidden; Backspace deletes it) */
+.mc-comment-row.mc-row-selected .mc-card { box-shadow: 0 0 0 2px var(--active); }
 .mc-comment-row td { padding: 0; background: var(--bg); }
 .mc-thread-cell { padding: 4px 12px 8px 64px; }
 .source-table .mc-thread-cell { padding: 4px 12px 8px 66px; }
@@ -2220,6 +2219,7 @@ let quickMode = 'all';
 let quickItems = [];
 let quickActive = 0;
 let viewerCursor = null;
+let selectedCommentRow = null; // a comment box "selected" while navigating with arrows (caret hidden); Backspace deletes it
 let currentHttpEnvName = (function () {
   let saved = '';
   try { saved = localStorage.getItem(httpEnvKey) || ''; } catch (error) { saved = ''; }
@@ -2229,6 +2229,7 @@ let currentHttpEnvName = (function () {
 let treeFocusIndex = -1;
 let selectionAnchor = null;
 let diffCursor = null; // { path, side: 'old'|'new', rowIndex, column } — keyboard caret in the side-by-side diff
+let diffSelectionAnchor = null; // { side, rowIndex, column } — Shift+Arrow drag-select origin in the diff
 let measuredCharWidth = 0;
 
 // Review-comment state — initialized here (early) so saved comments are loaded before
@@ -2715,6 +2716,27 @@ function clearTreeFocus() {
   document.querySelectorAll('.tree-focus').forEach((el) => el.classList.remove('tree-focus'));
 }
 
+// Focus the tree row for the currently open file (source openPath, else the active diff file);
+// falls back to the first row when nothing is open or no matching row exists.
+function focusOpenFileInTree() {
+  const rows = treeRows();
+  if (rows.length === 0) return;
+  let openPath = document.getElementById('source-viewer')?.dataset.openPath || '';
+  if (!openPath && typeof diffActiveWrapper === 'function') {
+    const w = diffActiveWrapper();
+    const n = w && w.querySelector('.d2h-file-name');
+    if (n && n.textContent) openPath = n.textContent.trim();
+  }
+  let idx = 0;
+  if (openPath) {
+    for (let i = 0; i < rows.length; i++) {
+      const ds = rows[i].dataset || {};
+      if (ds.sourceFile === openPath || ds.file === openPath) { idx = i; break; }
+    }
+  }
+  focusTree(idx);
+}
+
 function handleTreeKey(event) {
   const rows = treeRows();
   if (rows.length === 0) return false;
@@ -2753,13 +2775,13 @@ document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === '1') {
     event.preventDefault();
     setTab('files');
-    focusTree(0);
+    focusOpenFileInTree();
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key === '0') {
     event.preventDefault();
     setTab('changes');
-    focusTree(0);
+    focusOpenFileInTree();
     return;
   }
 
@@ -2770,6 +2792,15 @@ document.addEventListener('keydown', (event) => {
     if (!inField) {
       event.preventDefault();
       if (event.shiftKey) {
+        // In the diff view, Shift+Tab toggles the caret between the old/new panes (this change owns
+        // Shift+Tab L/R; plain arrows stay in-pane and Cmd/Ctrl+Arrows also cross — see diff nav).
+        if (isDiffViewVisible() && diffCursor) {
+          const tabSide = diffCursor.side === 'new' ? 'old' : 'new';
+          const tabWrap = diffWrapperByPath(diffCursor.path);
+          const tabRow = tabWrap ? diffRowAt(tabWrap, tabSide, diffCursor.rowIndex) : null;
+          if (isDiffCodeRow(tabRow)) setDiffCursor(diffCursor.path, tabSide, diffCursor.rowIndex, 0, true);
+          return;
+        }
         focusTree(treeFocusIndex >= 0 ? treeFocusIndex : 0); // ← left: focus sidebar tree
       } else {
         clearTreeFocus(); // → right: hand focus back to the content pane (source caret / diff nav)
@@ -2782,16 +2813,41 @@ document.addEventListener('keydown', (event) => {
     }
   }
 
-  // Review comments: "?" = question, ">" = change request on the current line; with Cmd/Ctrl, open the merged text view.
-  if (!event.altKey && (event.key === '?' || event.key === '>')) {
+  // Merged comment views — see every saved comment of one kind at once + copy-all to paste into a prompt:
+  //   Cmd/Ctrl+Shift+/ ("?") = all questions, Cmd/Ctrl+Shift+. (">") = all change-requests.
+  // Match the PHYSICAL key (event.code) so macOS/IME/layout never swallows the combo; fires in any focus.
+  if ((event.metaKey || event.ctrlKey) && (event.code === 'Slash' || event.code === 'Period' || event.key === '?' || event.key === '>')) {
+    event.preventDefault();
+    openMergedView((event.code === 'Slash' || event.key === '?') ? 'q' : 'c');
+    return;
+  }
+  // "?" = question, ">" = change-request composer on the current line/selection (no modifier).
+  if (!event.altKey && !event.metaKey && !event.ctrlKey && (event.key === '?' || event.key === '>')) {
     const ce = document.activeElement;
     const inEditable = ce && (ce.tagName === 'INPUT' || ce.tagName === 'TEXTAREA' || ce.tagName === 'SELECT');
     if (!inEditable) {
       event.preventDefault();
-      const kind = event.key === '?' ? 'q' : 'c';
-      if (event.metaKey || event.ctrlKey) openMergedView(kind);
-      else openComposer(kind);
+      openComposer(event.key === '?' ? 'q' : 'c');
       return;
+    }
+  }
+
+  // "<" (Shift+,) toggles "viewed" for the current file (source openPath, else active diff file).
+  if (!event.altKey && !event.metaKey && !event.ctrlKey && event.key === '<') {
+    const ce2 = document.activeElement;
+    const inEditable2 = ce2 && (ce2.tagName === 'INPUT' || ce2.tagName === 'TEXTAREA' || ce2.tagName === 'SELECT');
+    if (!inEditable2) {
+      let vp = isSourceViewerVisible() ? (document.getElementById('source-viewer')?.dataset.openPath || '') : '';
+      if (!vp && typeof diffActiveWrapper === 'function') {
+        const vw = diffActiveWrapper();
+        const vn = vw && vw.querySelector('.d2h-file-name');
+        if (vn && vn.textContent) vp = vn.textContent.trim();
+      }
+      if (vp && currentFileSignature(vp)) {
+        event.preventDefault();
+        setFileViewed(vp, !isFileViewed(vp));
+        return;
+      }
     }
   }
 
@@ -3136,11 +3192,26 @@ function setDiffCursor(path, side, rowIndex, column, reveal) {
   var ri = Math.max(0, Math.min(rowIndex, rows.length - 1));
   var col = Math.max(0, Math.min(column, diffLineText(rows[ri]).length));
   diffCursor = { path: path, side: side, rowIndex: ri, column: col };
+  diffSelectionAnchor = null; // any direct caret placement (click/F7/Cmd-arrow) drops the selection; Shift+Arrow re-sets it
   renderDiffCaret();
+  applyDiffSelection();
   if (reveal) {
     var r = diffRowAt(wrapper, side, ri);
     if (r && r.scrollIntoView) requestAnimationFrame(function () { try { r.scrollIntoView({ block: 'nearest' }); } catch (e) {} });
   }
+}
+function applyDiffSelection() {
+  var sel = window.getSelection();
+  if (!sel) return;
+  // Selection only makes sense within one pane and one file; otherwise clear it.
+  if (!diffSelectionAnchor || !diffCursor || diffSelectionAnchor.side !== diffCursor.side) { try { sel.removeAllRanges(); } catch (e) {} return; }
+  var wrapper = diffWrapperByPath(diffCursor.path);
+  if (!wrapper) { try { sel.removeAllRanges(); } catch (e) {} return; }
+  var aCtn = diffCellCtn(diffRowAt(wrapper, diffSelectionAnchor.side, diffSelectionAnchor.rowIndex));
+  var cCtn = diffCellCtn(diffRowAt(wrapper, diffCursor.side, diffCursor.rowIndex));
+  var a = aCtn ? diffCaretDomPosition(aCtn, diffSelectionAnchor.column) : null;
+  var c = cCtn ? diffCaretDomPosition(cCtn, diffCursor.column) : null;
+  if (a && c) { try { sel.setBaseAndExtent(a.node, a.offset, c.node, c.offset); } catch (e) {} }
 }
 function isDiffCodeRow(row) {
   if (!row) return false;
@@ -3166,7 +3237,7 @@ function ensureDiffCursor() {
   if (ri < 0) return;
   setDiffCursor(path, 'new', ri, 0, false);
 }
-function moveDiffCursor(dLine, dColumn) {
+function moveDiffCursor(dLine, dColumn, extend) {
   if (!diffCursor) return;
   var wrapper = diffWrapperByPath(diffCursor.path);
   if (!wrapper) return;
@@ -3175,6 +3246,8 @@ function moveDiffCursor(dLine, dColumn) {
   var ri = diffCursor.rowIndex;
   var col = diffCursor.column;
   var text = diffLineText(rows[ri]);
+  // Shift extends a text selection from where the caret sat before the first shifted move.
+  var anchor = extend ? (diffSelectionAnchor || { side: diffCursor.side, rowIndex: diffCursor.rowIndex, column: diffCursor.column }) : null;
   // Plain arrows stay within the current pane (no auto pane-crossing — that is Cmd+Left/Right).
   if (dColumn < 0) {
     if (col > 0) { col -= 1; }
@@ -3196,16 +3269,18 @@ function moveDiffCursor(dLine, dColumn) {
     while (cand >= 0 && cand < rows2.length && !isDiffCodeRow(rows2[cand])) cand += step;
     if (cand >= 0 && cand < rows2.length) { ri = cand; col = Math.min(col, diffLineText(rows2[ri]).length); }
   }
-  setDiffCursor(diffCursor.path, side, ri, col, true);
+  setDiffCursor(diffCursor.path, side, ri, col, true); // clears diffSelectionAnchor + native selection
+  if (anchor) { diffSelectionAnchor = anchor; applyDiffSelection(); } // re-establish the Shift selection
 }
 function handleDiffCaretKey(event) {
   if (!isDiffViewVisible() || !diffCursor) return false;
   var ae = document.activeElement;
   if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return false;
-  if (event.key === 'ArrowDown') { event.preventDefault(); moveDiffCursor(1, 0); return true; }
-  if (event.key === 'ArrowUp') { event.preventDefault(); moveDiffCursor(-1, 0); return true; }
-  if (event.key === 'ArrowLeft') { event.preventDefault(); moveDiffCursor(0, -1); return true; }
-  if (event.key === 'ArrowRight') { event.preventDefault(); moveDiffCursor(0, 1); return true; }
+  var extend = event.shiftKey;
+  if (event.key === 'ArrowDown') { event.preventDefault(); moveDiffCursor(1, 0, extend); return true; }
+  if (event.key === 'ArrowUp') { event.preventDefault(); moveDiffCursor(-1, 0, extend); return true; }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); moveDiffCursor(0, -1, extend); return true; }
+  if (event.key === 'ArrowRight') { event.preventDefault(); moveDiffCursor(0, 1, extend); return true; }
   return false;
 }
 
@@ -3239,43 +3314,66 @@ function deleteComment(seq) {
   refreshComments();
 }
 
+function sourceRowLineOf(node) {
+  var el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;
+  var row = el && el.closest ? el.closest('.source-row') : null;
+  if (!row) return null;
+  var v = parseInt(row.dataset.lineIndex, 10);
+  return isFinite(v) ? v : null;
+}
 function currentCommentTarget() {
   var sel = window.getSelection();
   var selText = (sel && sel.toString) ? sel.toString() : '';
   var hasSel = !!sel && !sel.isCollapsed && selText.trim().length > 0;
-  // Source view: anchor to the caret line (or the selection's first line); attach code ONLY when text is selected.
+  // Source view: anchor BELOW the selection (its last line) so the box sits under the drag.
+  // Derive the span from the actual DOM range so MOUSE drags work (they don't move the JS caret).
   if (isSourceViewerVisible() && viewerCursor) {
-    var sLine = viewerCursor.lineIndex + 1;
-    if (hasSel && selectionAnchor) sLine = Math.min(selectionAnchor.lineIndex, viewerCursor.lineIndex) + 1;
-    return { path: viewerCursor.path, line: sLine, code: hasSel ? selText : '' };
+    if (hasSel) {
+      var srng = sel.rangeCount ? sel.getRangeAt(0) : null;
+      var sa = srng ? sourceRowLineOf(srng.startContainer) : null;
+      var sb = srng ? sourceRowLineOf(srng.endContainer) : null;
+      if (sa == null || sb == null) { sa = selectionAnchor ? selectionAnchor.lineIndex : viewerCursor.lineIndex; sb = viewerCursor.lineIndex; }
+      var f = Math.min(sa, sb), t = Math.max(sa, sb);
+      return { path: viewerCursor.path, line: t + 1, code: selText, from: f + 1, to: t + 1, side: null };
+    }
+    return { path: viewerCursor.path, line: viewerCursor.lineIndex + 1, code: '', from: null, to: null, side: null };
   }
   // Diff view: prefer the explicit diff caret when there is no text selection.
   if (!hasSel && diffCursor && isDiffViewVisible()) {
     var dwrap = diffWrapperByPath(diffCursor.path);
     var drow = dwrap ? diffRowAt(dwrap, diffCursor.side, diffCursor.rowIndex) : null;
     var dline = drow ? diffLineNumber(drow) : null;
-    if (dline != null) return { path: diffCursor.path, line: dline, code: '' };
+    if (dline != null) return { path: diffCursor.path, line: dline, code: '', from: null, to: null, side: null };
   }
-  // Diff view: derive file + line from the selection/click position; attach selected code only when dragging.
-  var node = sel && sel.anchorNode;
-  var el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;
-  var wrapper = (el && el.closest && el.closest('.d2h-file-wrapper')) || document.querySelector('#diff2html-container .d2h-file-wrapper:not(.df-inactive)');
+  // Diff view with a selection (or click): anchor at the LAST line so the composer drops BELOW the
+  // drag; capture the selected code + line span (used to keep the drag highlighted via .mc-sel-line).
+  var rng = (sel && sel.rangeCount) ? sel.getRangeAt(0) : null;
+  var fromNode = rng ? rng.startContainer : (sel ? sel.anchorNode : null);
+  var toNode = rng ? rng.endContainer : (sel ? sel.anchorNode : null);
+  var fromEl = fromNode ? (fromNode.nodeType === 1 ? fromNode : fromNode.parentElement) : null;
+  var toEl = toNode ? (toNode.nodeType === 1 ? toNode : toNode.parentElement) : null;
+  var wrapper = (toEl && toEl.closest && toEl.closest('.d2h-file-wrapper')) || document.querySelector('#diff2html-container .d2h-file-wrapper:not(.df-inactive)');
   if (!wrapper) return null;
   var nameEl = wrapper.querySelector('.d2h-file-name');
   var path = (nameEl && nameEl.textContent ? nameEl.textContent : '').trim();
   if (!path) return null;
-  var row = el && el.closest ? el.closest('tr') : null;
-  if (!row || !row.querySelector('.d2h-code-side-linenumber')) {
+  var toRow = toEl && toEl.closest ? toEl.closest('tr') : null;
+  if (!toRow || !toRow.querySelector('.d2h-code-side-linenumber')) {
     var sides0 = wrapper.querySelectorAll('.d2h-file-side-diff');
     var right0 = sides0[sides0.length - 1];
     var firstNum = right0 ? right0.querySelector('.d2h-code-side-linenumber') : null;
-    row = firstNum ? firstNum.closest('tr') : null;
+    toRow = firstNum ? firstNum.closest('tr') : null;
   }
-  if (!row) return null;
-  var numEl = row.querySelector('.d2h-code-side-linenumber');
-  var line = numEl ? parseInt((numEl.textContent || '').trim(), 10) : NaN;
-  if (!isFinite(line)) return null;
-  return { path: path, line: line, code: hasSel ? selText : '' };
+  if (!toRow) return null;
+  var toLine = diffLineNumber(toRow);
+  if (toLine == null) return null;
+  var fromRow = (hasSel && fromEl && fromEl.closest) ? fromEl.closest('tr') : null;
+  var fromLine = fromRow ? diffLineNumber(fromRow) : null;
+  if (fromLine == null) fromLine = toLine;
+  var sideEl = toEl && toEl.closest ? toEl.closest('.d2h-file-side-diff') : null;
+  var st = diffSideTables(wrapper);
+  var side = (sideEl && sideEl === st.left) ? 'old' : 'new';
+  return { path: path, line: toLine, code: hasSel ? selText : '', from: hasSel ? Math.min(fromLine, toLine) : null, to: hasSel ? Math.max(fromLine, toLine) : null, side: side };
 }
 
 function threadHtml(path, line) {
@@ -3346,29 +3444,84 @@ function renderSourceComments() {
   });
 }
 
+// Per-file comment counts as small (no-emoji) badges in BOTH sidebars — the Changes list
+// (.change-row, before the diffstat) and the Files tree (.source-link, after the file name).
 function renderCommentBadges() {
-  var host = document.getElementById('mc-badges');
-  if (!host) return;
-  var q = 0, c = 0;
-  reviewComments.forEach(function (x) { if (x.kind === 'q') q += 1; else c += 1; });
-  host.innerHTML = '<button type="button" class="mc-badge mc-q" data-kind="q" title="Question comments (Cmd/Ctrl + ?)">❓ <b>' + q + '</b></button>'
-    + '<button type="button" class="mc-badge mc-c" data-kind="c" title="Change-request comments">✎ <b>' + c + '</b></button>';
+  document.querySelectorAll('.mc-file-badge').forEach(function (b) { b.remove(); });
+  var counts = {};
+  reviewComments.forEach(function (x) {
+    var k = counts[x.path] || (counts[x.path] = { q: 0, c: 0 });
+    if (x.kind === 'q') k.q += 1; else k.c += 1;
+  });
+  function makeBadge(k) {
+    var badge = document.createElement('span');
+    badge.className = 'mc-file-badge';
+    var html = '';
+    if (k.q) html += '<span class="mc-fb mc-fb-q" title="' + k.q + ' question(s)">' + k.q + '</span>';
+    if (k.c) html += '<span class="mc-fb mc-fb-c" title="' + k.c + ' change request(s)">' + k.c + '</span>';
+    badge.innerHTML = html;
+    return badge;
+  }
+  function inject(selector, keyAttr, refSelector) {
+    document.querySelectorAll(selector).forEach(function (row) {
+      var k = counts[row.dataset[keyAttr] || ''];
+      if (!k) return;
+      var ref = row.querySelector(refSelector);
+      if (ref) row.insertBefore(makeBadge(k), ref); else row.appendChild(makeBadge(k));
+    });
+  }
+  inject('.change-row', 'file', '.diffstat');
+  inject('.source-link', 'sourceFile', '.count');
 }
 
+// While composing on a drag selection, keep those lines highlighted (.mc-sel-line) so the user
+// sees what they are commenting on even though the native selection was cleared.
+function applyCommentSelectionHighlight() {
+  document.querySelectorAll('.mc-sel-line').forEach(function (r) { r.classList.remove('mc-sel-line'); });
+  if (!composerState || composerState.from == null || composerState.to == null) return;
+  var from = composerState.from, to = composerState.to;
+  if (isDiffViewVisible()) {
+    var wrap = diffWrapperByPath(composerState.path);
+    if (!wrap) return;
+    diffRowsOf(diffSideTable(wrap, composerState.side || 'new')).forEach(function (row) {
+      var ln = diffLineNumber(row);
+      if (ln != null && ln >= from && ln <= to) row.classList.add('mc-sel-line');
+    });
+  } else if (isSourceViewerVisible()) {
+    for (var ln = from; ln <= to; ln++) {
+      var sr = document.querySelector('.source-row[data-line-index="' + (ln - 1) + '"]');
+      if (sr) sr.classList.add('mc-sel-line');
+    }
+  }
+}
 function refreshComments() {
   renderDiffComments();
   if (isSourceViewerVisible()) renderSourceComments();
   renderCommentBadges();
+  applyCommentSelectionHighlight();
   if (composerState) {
-    var ta = document.querySelector('.mc-composer .mc-input');
-    if (ta) { ta.focus(); try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e) {} }
+    var focusComposerInput = function () {
+      var ta = document.querySelector('.mc-composer .mc-input');
+      if (ta && document.activeElement !== ta) {
+        try { ta.focus({ preventScroll: true }); } catch (e) { try { ta.focus(); } catch (e2) {} }
+        try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e3) {}
+      }
+    };
+    // Focus now, next frame, and next task: after a drag the browser may async-restore focus to
+    // the body (esp. in Electron), so retry across all three so the textarea reliably wins.
+    focusComposerInput();
+    requestAnimationFrame(focusComposerInput);
+    setTimeout(focusComposerInput, 0);
   }
 }
 
 function openComposer(kind) {
   var target = currentCommentTarget();
   if (!target) return;
-  composerState = { kind: kind, path: target.path, line: target.line, code: target.code };
+  composerState = { kind: kind, path: target.path, line: target.line, code: target.code, from: target.from, to: target.to, side: target.side };
+  // Keep the dragged code visibly highlighted via the .mc-sel-line class (applyCommentSelectionHighlight),
+  // and clear the native selection so its highlight doesn't bleed into the composer/cards below it.
+  try { var psel = window.getSelection(); if (psel) psel.removeAllRanges(); } catch (e) {}
   refreshComments();
 }
 function closeComposer() {
@@ -3452,8 +3605,6 @@ document.addEventListener('click', function (event) {
   if (del) { event.preventDefault(); deleteComment(parseInt(del.dataset.seq, 10)); return; }
   if (t.closest('.mc-save')) { event.preventDefault(); saveComposer(); return; }
   if (t.closest('.mc-cancel')) { event.preventDefault(); closeComposer(); return; }
-  var badge = t.closest('.mc-badge');
-  if (badge) { event.preventDefault(); openMergedView(badge.dataset.kind); return; }
 });
 document.addEventListener('keydown', function (event) {
   var t = event.target;
@@ -3747,6 +3898,7 @@ function measureCharWidth(element) {
 }
 
 function setSourceCursor(path, lineIndex, column, shouldReveal = false, targetLine = -1) {
+  selectedCommentRow = null; // any explicit caret placement (click/move) ends a comment-box selection
   const file = sourceByPath.get(path);
   if (!file || !file.embedded) return;
   const lines = file.content.split(/\r?\n/);
@@ -3805,9 +3957,60 @@ function openDiffFileAtCaret() {
   setSourceCursor(fileName, lineIndex, 0, true, -1);
 }
 
+// ----- Comment-box navigation: a box attached to a line is a selectable stop while moving the caret -----
+function commentRowSiblingOf(lineIndex, dir) {
+  var cur = document.querySelector('#source-body .source-row[data-line-index="' + lineIndex + '"]');
+  if (!cur) return null;
+  var sib = dir < 0 ? cur.previousElementSibling : cur.nextElementSibling;
+  return (sib && sib.classList && sib.classList.contains('mc-comment-row')) ? sib : null;
+}
+function selectCommentRow(row) {
+  if (selectedCommentRow && selectedCommentRow !== row) selectedCommentRow.classList.remove('mc-row-selected');
+  selectedCommentRow = row || null;
+  if (!selectedCommentRow) return;
+  selectedCommentRow.classList.add('mc-row-selected');
+  // hide the text caret while the box is "selected" (no re-render happens during plain selection)
+  document.querySelectorAll('#source-body .source-row.cursor-line').forEach(function (r) { r.classList.remove('cursor-line'); });
+  document.querySelectorAll('#source-body .code-cursor').forEach(function (s) { var p = s.parentNode; if (p) { p.removeChild(s); if (p.normalize) p.normalize(); } });
+}
+function deleteCommentsInRow(row) {
+  if (!row) return;
+  var seqs = Array.prototype.slice.call(row.querySelectorAll('.mc-del')).map(function (b) { return parseInt(b.dataset.seq, 10); });
+  selectedCommentRow = null;
+  if (seqs.length) {
+    reviewComments = reviewComments.filter(function (c) { return seqs.indexOf(c.seq) < 0; });
+    saveComments();
+  }
+  refreshComments(); // remaining comment rows re-injected; the caret stays hidden until the next arrow press
+}
 function handleSourceCaretKey(event) {
   if (!viewerCursor) return false;
+  var ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return false;
   const extend = event.shiftKey;
+  // A comment box is selected (caret hidden): Backspace/Delete removes it; an arrow steps off it.
+  if (selectedCommentRow) {
+    if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); deleteCommentsInRow(selectedCommentRow); return true; }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Escape') {
+      var dir = event.key === 'ArrowUp' ? -1 : (event.key === 'ArrowDown' ? 1 : 0);
+      var sib = dir < 0 ? selectedCommentRow.previousElementSibling : (dir > 0 ? selectedCommentRow.nextElementSibling : null);
+      selectedCommentRow.classList.remove('mc-row-selected');
+      selectedCommentRow = null;
+      event.preventDefault();
+      if (sib && sib.classList && sib.classList.contains('source-row')) {
+        var li = parseInt(sib.dataset.lineIndex, 10);
+        if (isFinite(li)) { setSourceCursor(viewerCursor.path, li, 0, true, -1); return true; }
+      }
+      setSourceCursor(viewerCursor.path, viewerCursor.lineIndex, viewerCursor.column, false, -1); // restore caret where it was
+      return true;
+    }
+    return false;
+  }
+  // Plain Up/Down: a comment box between the caret line and the next line becomes a selectable stop.
+  if (!extend && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    var box = commentRowSiblingOf(viewerCursor.lineIndex, event.key === 'ArrowUp' ? -1 : 1);
+    if (box) { event.preventDefault(); selectCommentRow(box); return true; }
+  }
   if (event.key === 'ArrowDown') { event.preventDefault(); moveSourceCursor(1, 0, extend); return true; }
   if (event.key === 'ArrowUp') { event.preventDefault(); moveSourceCursor(-1, 0, extend); return true; }
   if (event.key === 'ArrowLeft') { event.preventDefault(); moveSourceCursor(0, -1, extend); return true; }
