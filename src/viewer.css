@@ -601,6 +601,13 @@ h1 { margin: 0; font-size: 18px; }
 @keyframes cursor-blink {
   50% { opacity: 0; }
 }
+/* Keep the caret solid while it is actively moving (held arrow key / typing); blink only when idle. */
+.caret-busy .code-cursor { animation: none; opacity: 1; }
+/* Markdown/CSV rendered rows have no inline caret span — mark the whole cursor row instead. */
+.source-row.md-row.cursor-line .md-cell,
+.source-row.csv-row.cursor-line .csv-cell { background: color-mix(in srgb, #000 26%, transparent); }
+.source-row.md-row.cursor-line .num,
+.source-row.csv-row.cursor-line .num { color: var(--active); }
 .num {
   width: 58px;
   user-select: none;

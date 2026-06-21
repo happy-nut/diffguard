@@ -1338,6 +1338,7 @@ function renderDiffCaret() {
   } catch (e) { diffCaretSpan = null; }
 }
 function setDiffCursor(path, side, rowIndex, column, reveal) {
+  markCaretBusy();
   var wrapper = diffWrapperByPath(path);
   if (!wrapper) return;
   var rows = diffRowsOf(diffSideTable(wrapper, side));
@@ -2190,7 +2191,18 @@ function measureCharWidth(element) {
   return measuredCharWidth;
 }
 
+var caretBusyTimer = null;
+// While the caret is actively moving (held arrow key, typing), keep it solid and only resume the
+// blink animation after a short idle. Otherwise key-repeat exposes the blink's "off" frames between
+// moves and the caret appears to vanish intermittently.
+function markCaretBusy() {
+  document.body.classList.add('caret-busy');
+  if (caretBusyTimer) clearTimeout(caretBusyTimer);
+  caretBusyTimer = setTimeout(function () { document.body.classList.remove('caret-busy'); }, 650);
+}
+
 function setSourceCursor(path, lineIndex, column, shouldReveal = false, targetLine = -1) {
+  markCaretBusy();
   selectedCommentRow = null; // any explicit caret placement (click/move) ends a comment-box selection
   const file = sourceByPath.get(path);
   if (!file || !file.embedded) return;
@@ -2229,14 +2241,19 @@ function setSourceCursor(path, lineIndex, column, shouldReveal = false, targetLi
 function updateSourceCaret(prev, lines, language) {
   const body = document.getElementById('source-body');
   if (!body) return;
+  // Markdown/CSV render to HTML cells (.rendered-body): the caret is a whole-row highlight there,
+  // so never rewrite a cell's innerHTML (that would replace the rendered block with raw text).
+  const rendered = body.classList.contains('rendered-body');
   const rowFor = (idx) => body.querySelector('.source-row[data-line-index="' + idx + '"]');
   // Restore the line the caret left: drop the caret span, re-highlight the full line.
   if (prev && prev.lineIndex !== viewerCursor.lineIndex) {
     const prevRow = rowFor(prev.lineIndex);
     if (prevRow) {
       prevRow.classList.remove('cursor-line');
-      const prevCell = prevRow.querySelector('.source-code');
-      if (prevCell) prevCell.innerHTML = highlightLine(lines[prev.lineIndex] || '', language);
+      if (!rendered) {
+        const prevCell = prevRow.querySelector('.source-code');
+        if (prevCell) prevCell.innerHTML = highlightLine(lines[prev.lineIndex] || '', language);
+      }
     }
   }
   // Reconcile the go-to-definition highlight (set only on symbol jumps, cleared on plain moves).
@@ -2244,10 +2261,12 @@ function updateSourceCaret(prev, lines, language) {
   if (viewerCursor.targetLine >= 0) rowFor(viewerCursor.targetLine)?.classList.add('symbol-target');
   // Rebuild the new caret line with the caret span.
   const row = rowFor(viewerCursor.lineIndex);
-  if (!row) { openSourceFile(viewerCursor.path, false); return; } // line not in the DOM — fall back to a full render
+  if (!row) { if (!rendered) openSourceFile(viewerCursor.path, false); return; } // line not in the DOM — full re-render (eager source only)
   row.classList.add('cursor-line');
-  const cell = row.querySelector('.source-code');
-  if (cell) cell.innerHTML = renderLineWithCursor(lines[viewerCursor.lineIndex] || '', language, viewerCursor.column);
+  if (!rendered) {
+    const cell = row.querySelector('.source-code');
+    if (cell) cell.innerHTML = renderLineWithCursor(lines[viewerCursor.lineIndex] || '', language, viewerCursor.column);
+  }
 }
 
 function openSourceAt(path, lineIndex, column) {
@@ -2351,6 +2370,20 @@ function moveSourceCursor(dLine, dColumn, extend) {
   if (!viewerCursor) return;
   const file = sourceByPath.get(viewerCursor.path);
   if (!file || !file.embedded) return;
+  // Markdown/CSV rendered view: rows are blocks (sparse data-line-index), so any arrow steps to the
+  // adjacent block row rather than into a (non-existent) raw line. No text column / selection there.
+  const renderedBody = document.getElementById('source-body');
+  if (renderedBody && renderedBody.classList.contains('rendered-body')) {
+    const rows = Array.from(renderedBody.querySelectorAll('.source-row'));
+    if (!rows.length) return;
+    let ci = rows.indexOf(renderedBody.querySelector('.source-row[data-line-index="' + viewerCursor.lineIndex + '"]'));
+    if (ci < 0) ci = 0;
+    const step = (dLine || 0) + (dColumn > 0 ? 1 : dColumn < 0 ? -1 : 0);
+    const ni = Math.max(0, Math.min(rows.length - 1, ci + (step || 0)));
+    selectionAnchor = null;
+    setSourceCursor(viewerCursor.path, Number(rows[ni].dataset.lineIndex) || 0, 0, true, -1);
+    return;
+  }
   const lines = file.content.split(/\r?\n/);
   let line = viewerCursor.lineIndex;
   let col = viewerCursor.column;
