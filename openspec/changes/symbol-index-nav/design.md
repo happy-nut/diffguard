@@ -10,7 +10,7 @@
 
 ## Decisions
 
-1. **"백그라운드 프로세스" 재해석 → 렌더러 idle 인덱싱.** 소스가 이미 렌더러 메모리에 있으니 별도 프로세스/worker/IPC는 과하다(제1원칙: 가볍게). 로드 후 `requestIdleCallback`(폴백 `setTimeout`)로 인덱스를 1회 빌드 → 메인 스레드 블록 없음. 사용자가 말한 "백그라운드 프로세스"는 이 가벼운 형태(렌더러 idle)로 충족된다. **별도 worker thread는 범위 밖** — idle 빌드가 실제로 느려지는 게 관측될 때만 escape hatch로 고려(현재 불필요).
+1. **"백그라운드 프로세스" → 렌더러 Web Worker(Blob).** 인덱스를 별도 스레드(Web Worker)에서 빌드한다 — 메인 스레드에서 인덱싱을 일절 하지 않으므로 어떤 경우에도 UI가 블록되지 않는다(사용자 요구: "UI는 그 어떤 경우에도 block 되면 안돼"). `Function.prototype.toString()`으로 워커 소스를 만들어(regex 리터럴+단순 문자열, 백틱 0 → diffScript의 String.raw 함정 회피) `Blob`+`URL.createObjectURL`로 기동. 로드 직후 `setTimeout(…, 0)`로 부트스트랩을 미뤄 초기 렌더를 막지 않고, 임베드 소스의 `{path, content}`만 `postMessage`로 넘긴다. **렌더러 idle(요청 폐기됨) 대비 이점**: (a) 청크 사이에도 메인 스레드 작업이 없어 진짜로 안 막힘, (b) Electron 앱과 browser-serve **두 transport 모두**에서 동작(main 프로세스 IPC였다면 browser-serve를 놓침), (c) CSP 부재로 Blob 워커 게이트 없음. 워커 미지원(jsdom 등) 시 `symbolIndex`는 null로 남아 스캔 폴백이 그대로 동작.
 2. **인덱스 = `Map<name, [{path, lineIndex, column}]>`.** 전 임베드 파일 1회 스캔, 각 줄에 *이름 추출형* 선언 패턴 적용(기존 `definitionMatchers`를 baked-name 대신 capture-group으로 일반화 — 한 곳에서 두 형태를 만들어 일관 유지).
 3. **조회**: name → 후보 배열. 현재 파일 우선 정렬 후 첫 번째. 인덱스 미스/미완성이면 **기존 `findSymbolDefinition` 전수 스캔으로 폴백**.
 4. **`Cmd/Ctrl+B` = 보편 go-to-definition(소스 + diff, 범위 내).** 소스 뷰: `goToSymbolUnderCursor`. diff 뷰: diff 캐럿(`diffCursor`)의 단어를 추출 → `findSymbolDefinition` → `openSourceAt`(소스 뷰로 전환해 선언 표시). 기존 `Cmd/Ctrl+Down`은 각 뷰의 현재 동작 유지(소스=go-to-def, diff=`openDiffFileAtCaret` 파일 열기)로 무회귀. 입력 포커스 시 억제.
@@ -30,5 +30,5 @@
 
 (사용자 피드백으로 확정)
 - **diff 뷰 `Cmd/Ctrl+B` 지원: 예** — Decision 4에 반영(diff 캐럿 단어 → 선언, 소스 뷰로 전환).
-- **worker 승격: 범위 밖** — 렌더러 idle로 충분(별도 프로세스 불필요).
+- **worker 승격: 채택** — 사용자 지시("워커 승격해")에 따라 렌더러 Web Worker로 구현(Decision 1). '절대 블록 없음'은 별도 스레드가 가장 견고히 충족하고, Electron+browser 두 transport를 모두 커버한다.
 - **이름 추출형 + per-name 패턴을 한 소스에서 일괄 생성: 예** — Task 1.1.

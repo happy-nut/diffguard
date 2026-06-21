@@ -3049,6 +3049,15 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  if ((event.metaKey || event.ctrlKey) && (event.key === 'b' || event.key === 'B')) {
+    var aeB = document.activeElement;
+    if (aeB && (aeB.tagName === 'INPUT' || aeB.tagName === 'TEXTAREA' || aeB.tagName === 'SELECT')) return;
+    event.preventDefault();
+    if (isSourceViewerVisible()) goToSymbolUnderCursor();
+    else if (isDiffViewVisible()) goToSymbolFromDiff();
+    return;
+  }
+
   if ((event.metaKey || event.ctrlKey) && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && isSourceViewerVisible() && viewerCursor) {
     event.preventDefault();
     const lineEdgeFile = sourceByPath.get(viewerCursor.path);
@@ -3151,6 +3160,7 @@ document.getElementById('source-body')?.addEventListener('click', handleSourceCl
 document.addEventListener('copy', handleSourceCopy);
 
 populateHttpEnvSelect();
+setTimeout(startSymbolIndex, 0); // build the go-to-definition index off the main thread (Web Worker); never blocks
 const restored = restoreUiState();
 if (!restored) {
   const initial = location.hash.match(/^#hunk-(\\d+)$/);
@@ -4373,7 +4383,85 @@ function goToSymbolUnderCursor() {
   openSourceAt(target.path, target.lineIndex, target.column);
 }
 
+var symbolIndex = null; // Map<name, [{path,lineIndex,column}]>; built off-thread by a Web Worker, null until ready
+function symbolIndexWorker() {
+  self.onmessage = function (e) {
+    var files = e.data || [];
+    var patterns = [
+      /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)/,
+      /^\s*(?:(?:public|private|protected|internal|abstract|final|open|sealed|data|inner|annotation|static|export|default|expect|actual|value)\s+)*(?:class|interface|object|enum|trait|struct)\s+([A-Za-z_$][A-Za-z0-9_$]*)/,
+      /^\s*(?:export\s+)?(?:interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)/,
+      /^\s*(?:export\s+)?(?:const|let|var|val)\s+([A-Za-z_$][A-Za-z0-9_$]*)/,
+      /^\s*(?:(?:public|private|protected|internal|abstract|final|open|override|suspend|inline|operator|static|async)\s+)*(?:fun|def|fn|func)\s+([A-Za-z_$][A-Za-z0-9_$]*)/
+    ];
+    var index = new Map();
+    for (var fi = 0; fi < files.length; fi++) {
+      var p = files[fi].path;
+      var lines = String(files[fi].content || '').split(/\r?\n/);
+      for (var li = 0; li < lines.length; li++) {
+        var line = lines[li];
+        for (var pi = 0; pi < patterns.length; pi++) {
+          var m = patterns[pi].exec(line);
+          if (m && m[1]) {
+            var arr = index.get(m[1]);
+            if (!arr) { arr = []; index.set(m[1], arr); }
+            arr.push({ path: p, lineIndex: li, column: Math.max(0, line.indexOf(m[1])) });
+            break;
+          }
+        }
+      }
+    }
+    self.postMessage(index);
+  };
+}
+function startSymbolIndex() {
+  try {
+    if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) return;
+    var src = '(' + symbolIndexWorker.toString() + ')()';
+    var url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+    var worker = new Worker(url);
+    worker.onmessage = function (e) {
+      symbolIndex = e.data;
+      try { worker.terminate(); } catch (x) {}
+      try { URL.revokeObjectURL(url); } catch (x) {}
+    };
+    worker.onerror = function () { try { worker.terminate(); } catch (x) {} };
+    var payload = [];
+    for (var i = 0; i < sourceFiles.length; i++) {
+      if (sourceFiles[i].embedded) payload.push({ path: sourceFiles[i].path, content: sourceFiles[i].content });
+    }
+    worker.postMessage(payload);
+  } catch (err) { /* Worker unavailable -> scan fallback remains in effect */ }
+}
+function wordAtDiffCaret() {
+  if (!diffCursor) return null;
+  var wrapper = diffWrapperByPath(diffCursor.path);
+  if (!wrapper) return null;
+  var text = diffLineText(diffRowAt(wrapper, diffCursor.side, diffCursor.rowIndex));
+  var column = Math.max(0, Math.min(diffCursor.column, text.length));
+  var identifier = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+  var match = null;
+  while ((match = identifier.exec(text))) {
+    if (column >= match.index && column <= match.index + match[0].length) return match[0];
+  }
+  return null;
+}
+function goToSymbolFromDiff() {
+  var name = wordAtDiffCaret();
+  if (!name) return;
+  var target = findSymbolDefinition(name);
+  if (!target) return;
+  openSourceAt(target.path, target.lineIndex, target.column);
+}
 function findSymbolDefinition(name) {
+  if (symbolIndex) {
+    var hits = symbolIndex.get(name);
+    if (hits && hits.length) {
+      var cur = (viewerCursor && viewerCursor.path) || (diffCursor && diffCursor.path) || '';
+      for (var i = 0; i < hits.length; i++) { if (hits[i].path === cur) return hits[i]; }
+      return hits[0];
+    }
+  }
   const matchers = definitionMatchers(name);
   const currentPath = viewerCursor?.path || '';
   const orderedFiles = [
