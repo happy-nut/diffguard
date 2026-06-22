@@ -78,6 +78,9 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "settings.updated": "Updated. Restarting…",
     "settings.updateFailed": "Update failed — try again, or run: npm i -g @happy-nut/monacori",
     "settings.kbd.title": "Keyboard shortcuts",
+    "settings.kbd.cat.nav": "Navigation",
+    "settings.kbd.cat.review": "Review",
+    "settings.kbd.cat.terminal": "Terminal",
 
     // Settings — keyboard-shortcut labels (descriptions only; <kbd> key names stay literal)
     "kbd.nextChange": "Next change",
@@ -100,6 +103,11 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "kbd.allQuestionsChanges": "All questions / changes",
     "kbd.ignoreWhitespace": "Ignore whitespace",
     "kbd.saveComment": "Save comment",
+    "kbd.toggleTerminal": "Toggle terminal",
+    "kbd.splitPane": "Split pane",
+    "kbd.focusPane": "Focus prev / next pane",
+    "kbd.renamePane": "Rename pane",
+    "kbd.closeTerminal": "Close terminal (when focused)",
 
     // Settings — Merge prompts
     "mergePrompts.title": "Merge prompts",
@@ -204,6 +212,9 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "settings.updated": "업데이트 완료. 재시작 중…",
     "settings.updateFailed": "업데이트 실패 — 다시 시도하거나 실행하세요: npm i -g @happy-nut/monacori",
     "settings.kbd.title": "키보드 단축키",
+    "settings.kbd.cat.nav": "탐색",
+    "settings.kbd.cat.review": "리뷰",
+    "settings.kbd.cat.terminal": "터미널",
 
     // Settings — keyboard-shortcut labels
     "kbd.nextChange": "다음 변경",
@@ -226,6 +237,11 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "kbd.allQuestionsChanges": "전체 질문 / 변경요청",
     "kbd.ignoreWhitespace": "공백 무시",
     "kbd.saveComment": "코멘트 저장",
+    "kbd.toggleTerminal": "터미널 토글",
+    "kbd.splitPane": "패널 분할",
+    "kbd.focusPane": "이전 / 다음 패널로 이동",
+    "kbd.renamePane": "패널 이름 변경",
+    "kbd.closeTerminal": "터미널 닫기 (포커스 시)",
 
     // Settings — Merge prompts
     "mergePrompts.title": "병합 프롬프트",

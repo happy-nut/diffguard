@@ -196,7 +196,43 @@ export function renderDiffHtml(input: {
     '<button type="button" id="app-info-update" class="plain-button app-info-update hidden" data-i18n="settings.updateRestart">Update &amp; Restart</button>',
     '<label class="settings-label" for="settings-language" data-i18n="settings.language">Language</label>',
     '<select id="settings-language" class="settings-select"><option value="en">English</option><option value="ko">한국어</option></select>',
-    '<div class="app-info-keys"><div class="app-info-keys-h" data-i18n="settings.kbd.title">Keyboard shortcuts</div><div class="keys-grid"><kbd>F7</kbd><span data-i18n="kbd.nextChange">Next change</span><kbd>Shift+F7</kbd><span data-i18n="kbd.prevChange">Previous change</span><kbd>Cmd/Ctrl+W</kbd><span data-i18n="kbd.closeTab">Close tab</span><kbd>Cmd/Ctrl+Shift+[ / ]</kbd><span data-i18n="kbd.prevNextTab">Prev / next tab</span><kbd>Cmd/Ctrl+[ / ]</kbd><span data-i18n="kbd.cursorBackForward">Cursor back / forward</span><kbd>Shift Shift</kbd><span data-i18n="kbd.findFile">Find file</span><kbd>Cmd/Ctrl+Shift+F</kbd><span data-i18n="kbd.findInFiles">Find in files</span><kbd>Cmd/Ctrl+E</kbd><span data-i18n="kbd.recentFiles">Recent files</span><kbd>Cmd/Ctrl+B</kbd><span data-i18n="kbd.defUsages">Definition / usages</span><kbd>Cmd/Ctrl+&darr;</kbd><span data-i18n="kbd.goToDef">Go to definition</span><kbd>Cmd/Ctrl+1 / 0</kbd><span data-i18n="kbd.filesChangesTab">Files / Changes tab</span><kbd>Tab</kbd><span data-i18n="kbd.sidebarContent">Sidebar &harr; content</span><kbd>Opt/Alt+&larr;/&rarr;</kbd><span data-i18n="kbd.wordJump">Word jump (vim w)</span><kbd>Cmd/Ctrl+&larr;/&rarr;</kbd><span data-i18n="kbd.lineStartEnd">Line start / end</span><kbd>Shift+arrows</kbd><span data-i18n="kbd.extendSelection">Extend selection</span><kbd>&lt;</kbd><span data-i18n="kbd.toggleViewed">Toggle viewed</span><kbd>? &nbsp;&gt;</kbd><span data-i18n="kbd.addQuestionChange">Add question / change</span><kbd>Cmd/Ctrl+Shift+/ .</kbd><span data-i18n="kbd.allQuestionsChanges">All questions / changes</span><kbd>Cmd/Ctrl+Shift+W</kbd><span data-i18n="kbd.ignoreWhitespace">Ignore whitespace</span><kbd>Cmd/Ctrl+Enter</kbd><span data-i18n="kbd.saveComment">Save comment</span></div></div>',
+    '<div class="app-info-keys">' +
+    '<div class="app-info-keys-h" data-i18n="settings.kbd.title">Keyboard shortcuts</div>' +
+    '<div class="keys-cat" data-i18n="settings.kbd.cat.nav">Navigation</div>' +
+    '<div class="keys-grid">' +
+    '<kbd>F7</kbd><span data-i18n="kbd.nextChange">Next change</span>' +
+    '<kbd>Shift+F7</kbd><span data-i18n="kbd.prevChange">Previous change</span>' +
+    '<kbd>Cmd/Ctrl+1 / 0</kbd><span data-i18n="kbd.filesChangesTab">Files / Changes tab</span>' +
+    '<kbd>Tab</kbd><span data-i18n="kbd.sidebarContent">Sidebar &harr; content</span>' +
+    '<kbd>Shift Shift</kbd><span data-i18n="kbd.findFile">Find file</span>' +
+    '<kbd>Cmd/Ctrl+Shift+F</kbd><span data-i18n="kbd.findInFiles">Find in files</span>' +
+    '<kbd>Cmd/Ctrl+E</kbd><span data-i18n="kbd.recentFiles">Recent files</span>' +
+    '<kbd>Cmd/Ctrl+B</kbd><span data-i18n="kbd.defUsages">Definition / usages</span>' +
+    '<kbd>Cmd/Ctrl+&darr;</kbd><span data-i18n="kbd.goToDef">Go to definition</span>' +
+    '<kbd>Cmd/Ctrl+Shift+[ / ]</kbd><span data-i18n="kbd.prevNextTab">Prev / next tab</span>' +
+    '<kbd>Cmd/Ctrl+[ / ]</kbd><span data-i18n="kbd.cursorBackForward">Cursor back / forward</span>' +
+    '<kbd>Opt/Alt+&larr;/&rarr;</kbd><span data-i18n="kbd.wordJump">Word jump (vim w)</span>' +
+    '<kbd>Cmd/Ctrl+&larr;/&rarr;</kbd><span data-i18n="kbd.lineStartEnd">Line start / end</span>' +
+    '<kbd>Shift+arrows</kbd><span data-i18n="kbd.extendSelection">Extend selection</span>' +
+    '<kbd>Cmd/Ctrl+W</kbd><span data-i18n="kbd.closeTab">Close tab</span>' +
+    '</div>' +
+    '<div class="keys-cat" data-i18n="settings.kbd.cat.review">Review</div>' +
+    '<div class="keys-grid">' +
+    '<kbd>&lt;</kbd><span data-i18n="kbd.toggleViewed">Toggle viewed</span>' +
+    '<kbd>? &nbsp;&gt;</kbd><span data-i18n="kbd.addQuestionChange">Add question / change</span>' +
+    '<kbd>Cmd/Ctrl+Shift+/ .</kbd><span data-i18n="kbd.allQuestionsChanges">All questions / changes</span>' +
+    '<kbd>Cmd/Ctrl+Shift+W</kbd><span data-i18n="kbd.ignoreWhitespace">Ignore whitespace</span>' +
+    '<kbd>Cmd/Ctrl+Enter</kbd><span data-i18n="kbd.saveComment">Save comment</span>' +
+    '</div>' +
+    '<div class="keys-cat" data-i18n="settings.kbd.cat.terminal">Terminal</div>' +
+    '<div class="keys-grid">' +
+    '<kbd>Ctrl+`</kbd><span data-i18n="kbd.toggleTerminal">Toggle terminal</span>' +
+    '<kbd>Cmd/Ctrl+D</kbd><span data-i18n="kbd.splitPane">Split pane</span>' +
+    '<kbd>Cmd/Ctrl+Alt+[ / ]</kbd><span data-i18n="kbd.focusPane">Focus prev / next pane</span>' +
+    '<kbd>F2</kbd><span data-i18n="kbd.renamePane">Rename pane</span>' +
+    '<kbd>Cmd/Ctrl+W</kbd><span data-i18n="kbd.closeTerminal">Close terminal (when focused)</span>' +
+    '</div>' +
+    '</div>',
     "</section>",
     '<section class="settings-section hidden" data-cat="prompts">',
     '<div class="settings-h" data-i18n="mergePrompts.title">Merge prompts</div>',
