@@ -107,6 +107,7 @@ export function renderDiffHtml(input: {
   projectPath: string;
   watch?: boolean;
   ignoreWhitespace?: boolean;
+  app?: boolean; // Electron app — inline the integrated terminal (xterm); off elsewhere
   signature?: string;
   generatedAt?: string;
 }): string {
@@ -126,7 +127,7 @@ export function renderDiffHtml(input: {
     "<style>",
     diff2HtmlCss(),
     diffCss(),
-    xtermCss(),
+    input.app ? xtermCss() : "",
     "</style>",
     "</head>",
     "<body>",
@@ -167,11 +168,9 @@ export function renderDiffHtml(input: {
     "</main>",
     // Integrated terminal panel (Electron only — shown when window.monacoriPty exists). Fixed to the
     // content column's bottom; a top resizer drags its height. The merged prompt is sent here.
-    '<div id="terminal-panel" class="terminal-panel hidden">',
-    '<div class="terminal-resizer" aria-hidden="true"></div>',
-    '<div class="terminal-bar"><span class="terminal-title" data-i18n="terminal.title">Terminal</span><button type="button" id="terminal-close" class="terminal-x" data-i18n-title="terminal.close" title="Close terminal" aria-label="Close terminal">&times;</button></div>',
-    '<div id="terminal-host" class="terminal-host"></div>',
-    "</div>",
+    input.app
+      ? '<div id="terminal-panel" class="terminal-panel hidden"><div class="terminal-resizer" aria-hidden="true"></div><div class="terminal-bar"><span class="terminal-title" data-i18n="terminal.title">Terminal</span><button type="button" id="terminal-close" class="terminal-x" data-i18n-title="terminal.close" title="Close terminal" aria-label="Close terminal">&times;</button></div><div id="terminal-host" class="terminal-host"></div></div>'
+      : "",
     '<div id="quick-open" class="quick-open hidden" role="dialog" aria-modal="true" data-i18n-aria="quickopen.aria" aria-label="Quick open">',
     '<div class="quick-open-panel">',
     '<div class="quick-open-title"><span id="quick-open-mode" data-i18n="quickopen.searchFiles">Search files</span></div>',
@@ -218,7 +217,7 @@ export function renderDiffHtml(input: {
     `<script type="application/json" id="http-env-data">${jsonForScript(input.httpEnvironments)}</script>`,
     `<script>window.__MONACORI_VERSION__=${JSON.stringify(packageVersion)};</script>`,
     "<script>",
-    xtermScript(),
+    input.app ? xtermScript() : "",
     "</script>",
     "<script>",
     diffScript(),

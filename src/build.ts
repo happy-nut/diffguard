@@ -16,6 +16,7 @@ export function buildDiffReview(input: {
   ignoreWhitespace?: boolean;
   lazy?: boolean; // force lazy materialize (shells + on-demand bodies); auto for big repos
   lazyLoad?: boolean; // serve/Electron set this — bodies + source fetched on demand, not embedded
+  app?: boolean; // Electron app — inlines the integrated terminal (xterm); off for serve/standalone/tests
 }): DiffReviewBuild {
   if (!isGitRepository(process.cwd())) {
     return {
@@ -71,6 +72,7 @@ export function buildDiffReview(input: {
     projectPath: process.cwd(),
     watch: Boolean(input.watch),
     ignoreWhitespace: Boolean(input.ignoreWhitespace),
+    app: Boolean(input.app),
     signature,
     generatedAt,
   });

@@ -263,6 +263,7 @@ function writeReviewFile(input: AppOptions): { signature: string } {
     title: "monacori",
     ignoreWhitespace: input.ignoreWhitespace,
     lazyLoad: true, // Electron streams per-file bodies/source over IPC (monacori:get-file / get-source)
+    app: true, // gate the integrated terminal (xterm) into the HTML — Electron only
   });
   writeFileSync(reviewPath(), build.html);
   currentBodies = build.lazyBodies ?? [];
