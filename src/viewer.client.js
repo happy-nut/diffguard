@@ -1793,18 +1793,23 @@ function refreshComments() {
   renderCommentBadges();
   applyCommentSelectionHighlight();
   if (composerState) {
-    var focusComposerInput = function () {
+    var composerFocusTries = 0;
+    var tryFocusComposer = function () {
       var ta = document.querySelector('.mc-composer .mc-input');
-      if (ta && document.activeElement !== ta) {
-        try { ta.focus({ preventScroll: true }); } catch (e) { try { ta.focus(); } catch (e2) {} }
-        try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e3) {}
-      }
+      if (!ta) return true;                            // composer gone — stop retrying
+      if (document.activeElement === ta) return true;  // already focused — done
+      try { ta.focus({ preventScroll: true }); } catch (e) { try { ta.focus(); } catch (e2) {} }
+      try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e3) {}
+      return document.activeElement === ta;
     };
-    // Focus now, next frame, and next task: after a drag the browser may async-restore focus to
-    // the body (esp. in Electron), so retry across all three so the textarea reliably wins.
-    focusComposerInput();
-    requestAnimationFrame(focusComposerInput);
-    setTimeout(focusComposerInput, 0);
+    // A one-shot focus works in a plain browser, but Electron asynchronously restores focus to <body>
+    // after the keydown, so the textarea loses that race. Retry on a short interval until it wins (or the
+    // composer closes), capped at ~300ms so it never fights real user focus once they start typing.
+    if (!tryFocusComposer()) {
+      var composerFocusIv = setInterval(function () {
+        if (tryFocusComposer() || ++composerFocusTries > 12) clearInterval(composerFocusIv);
+      }, 25);
+    }
   }
 }
 
