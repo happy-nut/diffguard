@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +51,36 @@ ipcMain.handle("monacori:self-update", () => {
   }
   const detail = (result.stderr || result.stdout || (result.error && result.error.message) || "npm install failed").trim();
   return { ok: false, error: detail.slice(-600) };
+});
+
+// Persisted global settings (locale, …) live in a JSON file under userData and reach the renderer
+// via preload + the two handlers below. The renderer's file:// localStorage is NOT reliably persisted
+// across app restarts, so settings that must survive a reopen round-trip through the main process.
+function settingsFile(): string {
+  return join(app.getPath("userData"), "monacori-settings.json");
+}
+function readSettings(): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(settingsFile(), "utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+function writeSettings(settings: Record<string, unknown>): void {
+  try {
+    writeFileSync(settingsFile(), JSON.stringify(settings, null, 2));
+  } catch {
+    /* best-effort: a failed write just means the setting isn't persisted */
+  }
+}
+ipcMain.on("monacori:get-settings", (event) => {
+  event.returnValue = readSettings();
+});
+ipcMain.on("monacori:set-setting", (_event, msg: { key?: string; value?: unknown }) => {
+  if (!msg || typeof msg.key !== "string") return;
+  const settings = readSettings();
+  settings[msg.key] = msg.value;
+  writeSettings(settings);
 });
 
 const iconPath = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "icon.png");

@@ -31,3 +31,25 @@ contextBridge.exposeInMainWorld("monacoriFile", {
 contextBridge.exposeInMainWorld("monacoriUpdate", {
   run: (): Promise<unknown> => ipcRenderer.invoke("monacori:self-update"),
 });
+
+// Global settings (locale, …) persisted by the main process under userData so they survive app
+// restarts — the renderer's file:// localStorage is not reliably persisted across reopens. `all` is
+// read synchronously at preload so the renderer can pick the locale before first paint; `set` writes
+// asynchronously. Only present in the Electron app; browser/serve mode falls back to localStorage.
+const persistedSettings: Record<string, unknown> = (() => {
+  try {
+    return (ipcRenderer.sendSync("monacori:get-settings") as Record<string, unknown>) || {};
+  } catch {
+    return {};
+  }
+})();
+contextBridge.exposeInMainWorld("monacoriSettings", {
+  all: persistedSettings,
+  set: (key: string, value: unknown): void => {
+    try {
+      ipcRenderer.send("monacori:set-setting", { key, value });
+    } catch {
+      /* noop */
+    }
+  },
+});

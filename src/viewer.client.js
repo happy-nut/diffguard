@@ -121,7 +121,14 @@ const sourceFiles = JSON.parse(document.getElementById('source-files-data')?.tex
 // chrome (data-i18n / -ph / -title / -aria). English is the first-paint default.
 var I18N = JSON.parse(document.getElementById('i18n-data')?.textContent || '{}');
 var LOCALE_KEY = 'monacori-locale';
-var locale = (function () { var v = null; try { v = localStorage.getItem(LOCALE_KEY); } catch (e) {} return (v === 'ko' || v === 'en') ? v : 'en'; })();
+// Electron persists the locale via the main process (window.monacoriSettings) because file:// localStorage
+// is not kept across app restarts; browser/serve mode has no bridge and falls back to localStorage.
+var locale = (function () {
+  var v = null;
+  try { if (window.monacoriSettings && window.monacoriSettings.all) v = window.monacoriSettings.all[LOCALE_KEY]; } catch (e) {}
+  if (v !== 'ko' && v !== 'en') { try { v = localStorage.getItem(LOCALE_KEY); } catch (e2) {} }
+  return (v === 'ko' || v === 'en') ? v : 'en';
+})();
 function t(key) { var m = (I18N[locale] || I18N.en || {}); return (m && key in m) ? m[key] : ((I18N.en && I18N.en[key]) || key); }
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t(el.getAttribute('data-i18n')); });
@@ -2044,6 +2051,7 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function')
       if (next === locale) return;
       locale = next;
       try { localStorage.setItem(LOCALE_KEY, locale); } catch (e) {}
+      try { if (window.monacoriSettings) window.monacoriSettings.set(LOCALE_KEY, locale); } catch (e2) {}
       applyI18n();
       // Merge-prompt placeholders are locale-dependent defaults; refresh them while the panel is open.
       fill();
