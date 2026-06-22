@@ -739,6 +739,10 @@ h1 { margin: 0; font-size: 18px; }
 .mc-btn { background: var(--active); color: #fff; border: 0; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
 .mc-btn:hover { filter: brightness(1.1); }
 .mc-btn.mc-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+/* Terminal-send buttons in the merged modal: green to read as "send to the live session", with a clear
+   focus ring so arrow-key selection between split panes is visible. */
+.mc-send-term { background: #2f8f46; }
+.mc-send-term:focus, .mc-send-term:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 .mc-hint { color: var(--muted); font-size: 11px; }
 .mc-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: start center; padding-top: min(10vh, 80px); background: color-mix(in srgb, #000 32%, transparent); }
 .mc-modal.hidden { display: none; }
@@ -1022,3 +1026,60 @@ h1 { margin: 0; font-size: 18px; }
 .csv-head .csv-cell { background: var(--line); color: #d7e0ea; font-weight: 650; }
 .csv-row:nth-child(even) .csv-cell { background: rgba(255, 255, 255, 0.018); }
 .csv-empty { color: var(--muted); font-style: italic; padding: 16px; }
+
+/* --- Integrated terminal panel (Electron only): fixed to the content column's bottom, height-resizable.
+   The active border-top marks it as the merged-prompt send target ("highlighted while it's open"). --- */
+.terminal-panel {
+  position: fixed;
+  left: var(--sidebar-width, 280px);
+  right: 0;
+  bottom: 0;
+  height: var(--terminal-height, 320px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-top: 2px solid var(--active);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.45);
+}
+.terminal-resizer { flex: none; height: 6px; margin-top: -3px; cursor: row-resize; }
+.terminal-resizer:hover, .terminal-resizer.resizing { background: var(--active); }
+.terminal-bar {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 10px; background: var(--sidebar); border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+}
+.terminal-title { letter-spacing: 0.08em; text-transform: uppercase; }
+.terminal-x { border: 0; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 4px; cursor: pointer; }
+.terminal-x:hover { color: var(--text); }
+/* Split panes sit side by side (no tabs); the 1px gap shows the --border underneath as a divider. */
+.terminal-host { flex: 1 1 auto; min-height: 0; display: flex; gap: 1px; overflow: hidden; background: var(--border); }
+.terminal-pane { flex: 1 1 0; min-width: 0; background: var(--bg); overflow: hidden; display: flex; flex-direction: column; }
+/* Per-pane name strip at the top; double-click or Cmd/Ctrl+Alt+R to rename inline. */
+.terminal-pane-label {
+  flex: none; padding: 2px 10px; font-size: 10px; letter-spacing: 0.04em;
+  color: var(--muted); background: var(--sidebar); border-bottom: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text;
+}
+.terminal-pane-label:hover { color: var(--text); }
+.terminal-pane-label[contenteditable="true"] { color: var(--text); background: var(--bg); outline: none; }
+.terminal-pane.is-active .terminal-pane-label { color: var(--text); }
+.terminal-pane-host { flex: 1 1 auto; min-width: 0; min-height: 0; padding: 4px 0 4px 8px; }
+.terminal-pane.is-active { box-shadow: inset 2px 0 0 var(--active); }
+/* Pane-pick mode (merged "Send to terminal"): chosen pane ringed + full opacity, the rest dimmed. */
+.terminal-panel.send-mode .terminal-pane { transition: opacity 120ms ease; }
+.terminal-pane.is-dimmed { opacity: 0.3; }
+.terminal-pane.is-send-target { box-shadow: inset 0 0 0 2px var(--active); opacity: 1; position: relative; }
+/* Faint ⏎ hint floating over the chosen pane; it vanishes the instant Enter exits send mode. */
+.terminal-pane.is-send-target::after {
+  content: "⏎";
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 56px; color: var(--active); opacity: 0.32; pointer-events: none; z-index: 5;
+}
+/* Send mode dims the rest of the app (sidebar + file/diff view) so only the terminal pops. */
+body.terminal-send-mode .sidebar,
+body.terminal-send-mode .content,
+body.terminal-send-mode .sidebar-resizer { opacity: 0.25; pointer-events: none; }
+/* Pad the content tail so it isn't hidden behind the fixed panel while the terminal is open. */
+body.terminal-open .content { padding-bottom: var(--terminal-height, 320px); }
+.terminal-toggle.is-active { color: var(--active); }

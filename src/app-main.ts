@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
 import { buildDiffReview, performHttpRequest, type HttpSendRequest } from "./cli.js";
+import { spawn as spawnPty, type IPty } from "node-pty";
 
 type AppOptions = {
   root: string;
@@ -51,6 +52,41 @@ ipcMain.handle("monacori:self-update", () => {
   }
   const detail = (result.stderr || result.stdout || (result.error && result.error.message) || "npm install failed").trim();
   return { ok: false, error: detail.slice(-600) };
+});
+
+// Integrated terminal: own node-pty sessions in the main process (the sandboxed renderer can't spawn
+// them) and relay bytes to the renderer's xterm panes. Each split pane gets its own pty, keyed by id, so
+// the renderer can route data/resize/kill per pane.
+const terms = new Map<number, IPty>();
+let nextPtyId = 0;
+ipcMain.handle("monacori:pty-spawn", (_event, size: { cols?: number; rows?: number }) => {
+  const id = ++nextPtyId;
+  const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "/bin/zsh");
+  const t = spawnPty(shell, [], {
+    name: "xterm-color",
+    cols: size?.cols ?? 80,
+    rows: size?.rows ?? 24,
+    cwd: options.root,
+    env: process.env as { [key: string]: string },
+  });
+  terms.set(id, t);
+  // mainWindow?. only guards null, NOT a *destroyed* window — sending to a closed window's webContents
+  // throws "Object has been destroyed". The pty can outlive the window (close races pty teardown), so
+  // guard every relay with isDestroyed().
+  const deliver = (channel: string, payload: unknown) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+  };
+  t.onData((data) => deliver("monacori:pty-data", { id, data }));
+  t.onExit(() => { terms.delete(id); deliver("monacori:pty-exit", { id }); });
+  return { ok: true, id };
+});
+ipcMain.on("monacori:pty-write", (_event, msg: { id: number; data: string }) => { terms.get(msg?.id)?.write(msg.data); });
+ipcMain.on("monacori:pty-resize", (_event, msg: { id: number; cols: number; rows: number }) => {
+  try { terms.get(msg?.id)?.resize(msg.cols, msg.rows); } catch { /* resize can race the pty teardown — ignore */ }
+});
+ipcMain.on("monacori:pty-kill", (_event, msg: { id: number }) => {
+  const t = terms.get(msg?.id);
+  if (t) { try { t.kill(); } catch { /* already exited */ } terms.delete(msg.id); }
 });
 
 // Persisted global settings (locale, …) live in a JSON file under userData and reach the renderer
@@ -140,6 +176,20 @@ app.whenReady().then(async () => {
       { label: "Close Window", click: () => mainWindow?.close() },
     ],
   });
+  // Terminal toggle/split as menu accelerators: Chromium swallows Cmd+D before it reaches the renderer
+  // (Cmd+A and friends arrive fine), so route the split — and the toggles — through the menu instead.
+  menuTemplate.push({
+    label: "Terminal",
+    submenu: [
+      { label: "Toggle Terminal", accelerator: "Control+`", click: () => mainWindow?.webContents.send("monacori:terminal-toggle") },
+      { label: "Toggle Terminal (F12)", accelerator: "Alt+F12", click: () => mainWindow?.webContents.send("monacori:terminal-toggle") },
+      { label: "Split Terminal", accelerator: "CommandOrControl+D", click: () => mainWindow?.webContents.send("monacori:terminal-split") },
+      { type: "separator" },
+      { label: "Focus Previous Pane", accelerator: "CommandOrControl+Alt+[", click: () => mainWindow?.webContents.send("monacori:terminal-pane-focus", -1) },
+      { label: "Focus Next Pane", accelerator: "CommandOrControl+Alt+]", click: () => mainWindow?.webContents.send("monacori:terminal-pane-focus", 1) },
+      { label: "Rename Pane", accelerator: "CommandOrControl+Alt+R", click: () => mainWindow?.webContents.send("monacori:terminal-pane-rename") },
+    ],
+  });
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   const appIcon = nativeImage.createFromPath(iconPath);
@@ -183,6 +233,8 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (refreshTimer) clearInterval(refreshTimer);
+  for (const t of terms.values()) { try { t.kill(); } catch { /* already exited */ } }
+  terms.clear();
   app.quit();
 });
 

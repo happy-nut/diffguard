@@ -17,6 +17,20 @@ contextBridge.exposeInMainWorld("monacoriMenu", {
   onCloseTab: (cb: () => void): void => {
     ipcRenderer.on("monacori:close-tab", () => cb());
   },
+  // Terminal menu accelerators (Ctrl+`/Alt+F12 toggle, Cmd+D split) — routed via the menu because
+  // Chromium swallows Cmd+D before it reaches the renderer's keydown handler.
+  onTerminalToggle: (cb: () => void): void => {
+    ipcRenderer.on("monacori:terminal-toggle", () => cb());
+  },
+  onTerminalSplit: (cb: () => void): void => {
+    ipcRenderer.on("monacori:terminal-split", () => cb());
+  },
+  onTerminalPaneFocus: (cb: (delta: number) => void): void => {
+    ipcRenderer.on("monacori:terminal-pane-focus", (_event, delta: number) => cb(delta));
+  },
+  onTerminalPaneRename: (cb: () => void): void => {
+    ipcRenderer.on("monacori:terminal-pane-rename", () => cb());
+  },
 });
 
 // Phase 2 lazy-LOAD: fetch a single file's diff body from the main process on demand, so the initial
@@ -30,6 +44,23 @@ contextBridge.exposeInMainWorld("monacoriFile", {
 // in the Electron app (not browser/watch mode), so the renderer hides the in-app update button there.
 contextBridge.exposeInMainWorld("monacoriUpdate", {
   run: (): Promise<unknown> => ipcRenderer.invoke("monacori:self-update"),
+});
+
+
+// Integrated terminal: bridge the renderer's xterm view to a node-pty owned by the main process (the
+// sandboxed renderer can't spawn a pty). Only present in the Electron app; browser/serve mode lacks it,
+// so the renderer keeps the terminal panel hidden there.
+contextBridge.exposeInMainWorld("monacoriPty", {
+  spawn: (size: { cols: number; rows: number }): Promise<{ ok: boolean; id: number }> => ipcRenderer.invoke("monacori:pty-spawn", size),
+  write: (msg: { id: number; data: string }): void => ipcRenderer.send("monacori:pty-write", msg),
+  resize: (msg: { id: number; cols: number; rows: number }): void => ipcRenderer.send("monacori:pty-resize", msg),
+  kill: (msg: { id: number }): void => ipcRenderer.send("monacori:pty-kill", msg),
+  onData: (cb: (msg: { id: number; data: string }) => void): void => {
+    ipcRenderer.on("monacori:pty-data", (_event, msg: { id: number; data: string }) => cb(msg));
+  },
+  onExit: (cb: (msg: { id: number }) => void): void => {
+    ipcRenderer.on("monacori:pty-exit", (_event, msg: { id: number }) => cb(msg));
+  },
 });
 
 // Global settings (locale, …) persisted by the main process under userData so they survive app

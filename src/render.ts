@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import type { DiffFile, ReviewFileState, SourceFile, SourceTreeNode } from "./types.js";
 import { escapeAttr, escapeHtml, jsonForScript } from "./util.js";
-import { diff2HtmlCss, diffCss, diffScript } from "./assets.js";
+import { diff2HtmlCss, diffCss, diffScript, xtermCss, xtermScript } from "./assets.js";
 import { MESSAGES } from "./i18n.js";
 
 const nodeRequire = createRequire(import.meta.url);
@@ -126,6 +126,7 @@ export function renderDiffHtml(input: {
     "<style>",
     diff2HtmlCss(),
     diffCss(),
+    xtermCss(),
     "</style>",
     "</head>",
     "<body>",
@@ -142,7 +143,7 @@ export function renderDiffHtml(input: {
       ? `<div class="tab-panel hidden" id="files-panel"></div><script type="text/html" id="files-tree-html">${sourceNav}</script>`
       : `<div class="tab-panel" id="files-panel">${sourceNav}</div>`,
     "</div>",
-    `<div class="sidebar-footer"><span class="app-version">monacori${packageVersion ? " v" + escapeHtml(packageVersion) : ""}</span><span id="app-update-flag" class="app-update-flag hidden" data-i18n="sidebar.updateAvailable" data-i18n-title="settings.updateAvailable" title="Update available">update available</span><button type="button" id="app-info-btn" class="settings-btn" aria-haspopup="dialog" data-i18n-aria="about.title" data-i18n-title="about.title" aria-label="About monacori" title="About monacori">⚙</button></div>`,
+    `<div class="sidebar-footer"><span class="app-version">monacori${packageVersion ? " v" + escapeHtml(packageVersion) : ""}</span><span id="app-update-flag" class="app-update-flag hidden" data-i18n="sidebar.updateAvailable" data-i18n-title="settings.updateAvailable" title="Update available">update available</span><button type="button" id="terminal-toggle" class="settings-btn terminal-toggle hidden" data-i18n-title="terminal.toggle" title="Toggle terminal (Ctrl+\`)" aria-label="Toggle terminal">⌗</button><button type="button" id="app-info-btn" class="settings-btn" aria-haspopup="dialog" data-i18n-aria="about.title" data-i18n-title="about.title" aria-label="About monacori" title="About monacori">⚙</button></div>`,
     "</aside>",
     '<div class="sidebar-resizer" aria-hidden="true"></div>',
     '<main class="content">',
@@ -164,6 +165,13 @@ export function renderDiffHtml(input: {
     '<div id="source-body" class="source-body empty" data-i18n="source.selectFile">Select a file from the Files tab.</div>',
     "</section>",
     "</main>",
+    // Integrated terminal panel (Electron only — shown when window.monacoriPty exists). Fixed to the
+    // content column's bottom; a top resizer drags its height. The merged prompt is sent here.
+    '<div id="terminal-panel" class="terminal-panel hidden">',
+    '<div class="terminal-resizer" aria-hidden="true"></div>',
+    '<div class="terminal-bar"><span class="terminal-title" data-i18n="terminal.title">Terminal</span><button type="button" id="terminal-close" class="terminal-x" data-i18n-title="terminal.close" title="Close terminal" aria-label="Close terminal">&times;</button></div>',
+    '<div id="terminal-host" class="terminal-host"></div>',
+    "</div>",
     '<div id="quick-open" class="quick-open hidden" role="dialog" aria-modal="true" data-i18n-aria="quickopen.aria" aria-label="Quick open">',
     '<div class="quick-open-panel">',
     '<div class="quick-open-title"><span id="quick-open-mode" data-i18n="quickopen.searchFiles">Search files</span></div>',
@@ -209,6 +217,9 @@ export function renderDiffHtml(input: {
     `<script type="application/json" id="file-state-data">${jsonForScript(input.fileStates)}</script>`,
     `<script type="application/json" id="http-env-data">${jsonForScript(input.httpEnvironments)}</script>`,
     `<script>window.__MONACORI_VERSION__=${JSON.stringify(packageVersion)};</script>`,
+    "<script>",
+    xtermScript(),
+    "</script>",
     "<script>",
     diffScript(),
     "</script>",

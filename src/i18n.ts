@@ -18,6 +18,9 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     // Sidebar footer / About
     "sidebar.updateAvailable": "update available",
     "about.title": "About monacori",
+    "terminal.title": "Terminal",
+    "terminal.toggle": "Toggle terminal (Ctrl+`)",
+    "terminal.close": "Close terminal",
 
     // Review status (toolbar) — units; the numeric count stays dynamic and is prepended at runtime.
     "status.files": "files",
@@ -120,6 +123,7 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "merged.qTitle": "Question comments",
     "merged.cTitle": "Change-request comments",
     "merged.copyAll": "Copy all",
+    "merged.sendToTerminal": "Send to terminal",
     "merged.copied": "Copied",
     "merged.copyFailed": "Copy failed",
     "merged.close": "Close",
@@ -138,6 +142,9 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     // Sidebar footer / About
     "sidebar.updateAvailable": "업데이트 있음",
     "about.title": "monacori 정보",
+    "terminal.title": "터미널",
+    "terminal.toggle": "터미널 토글 (Ctrl+`)",
+    "terminal.close": "터미널 닫기",
 
     // Review status (toolbar)
     "status.files": "개 파일",
@@ -240,6 +247,7 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "merged.qTitle": "질문 코멘트",
     "merged.cTitle": "변경 요청 코멘트",
     "merged.copyAll": "전체 복사",
+    "merged.sendToTerminal": "터미널로 전송",
     "merged.copied": "복사됨",
     "merged.copyFailed": "복사 실패",
     "merged.close": "닫기",
