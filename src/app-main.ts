@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
 import { buildDiffReview, performHttpRequest, type HttpSendRequest } from "./cli.js";
+import { sanitizeTerminalEnv } from "./util.js";
 import { spawn as spawnPty, type IPty } from "node-pty";
 
 type AppOptions = {
@@ -16,6 +17,11 @@ type AppOptions = {
   ignoreWhitespace: boolean;
 };
 
+// `npm run dev` sets MONACORI_DEV=1 so a locally-built app announces itself — a window-title suffix
+// plus a boot log with its on-disk path — making it obvious whether `mo` launched THIS checkout or
+// the globally-installed package (their version numbers can be identical; the path is the tell).
+const DEV_BUILD = process.env.MONACORI_DEV === "1";
+const APP_TITLE = DEV_BUILD ? "monacori (dev)" : "monacori";
 const FLOW_DIR = ".monacori";
 const REVIEW_FILE = "app-review.html";
 const WATCH_INTERVAL_MS = 1000;
@@ -78,7 +84,7 @@ ipcMain.handle("monacori:pty-spawn", (_event, size: { cols?: number; rows?: numb
     cols: size?.cols ?? 80,
     rows: size?.rows ?? 24,
     cwd: options.root,
-    env: process.env as { [key: string]: string },
+    env: sanitizeTerminalEnv(process.env),
   });
   terms.set(id, t);
   // mainWindow?. only guards null, NOT a *destroyed* window — sending to a closed window's webContents
@@ -146,6 +152,9 @@ if (!existsSync(options.root)) {
 }
 
 app.whenReady().then(async () => {
+  // Foreground (`npm run dev` / `mo --foreground`) surfaces this in the terminal; detached `mo` drops
+  // it. Either way the path disambiguates a local checkout from the installed package.
+  console.error(`[monacori] ${DEV_BUILD ? "DEV build" : "build"} — ${app.getAppPath()} (electron ${process.versions.electron})`);
   process.chdir(options.root);
   mkdirSync(FLOW_DIR, { recursive: true });
   // Keep the standard Edit/Window roles so Cmd+C/V/X/A (copy comments into prompts) and Cmd+Q work.
@@ -218,7 +227,7 @@ app.whenReady().then(async () => {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    title: "monacori",
+    title: APP_TITLE,
     icon: iconPath,
     backgroundColor: "#2b2b2b",
     autoHideMenuBar: true,
@@ -232,7 +241,10 @@ app.whenReady().then(async () => {
   });
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
+    if (DEV_BUILD) mainWindow?.webContents.openDevTools({ mode: "detach" });
+  });
   // Paint the window with a spinner immediately, then build the (potentially heavy) review off the first
   // paint and swap it in. The first build used to run synchronously *before* the window existed, so the
   // screen stayed blank for the first few seconds of startup; now the user sees a loading screen instead.
@@ -290,7 +302,7 @@ function writeReviewFile(input: AppOptions): { signature: string; html: string; 
     staged: input.staged,
     includeUntracked: input.includeUntracked,
     context: input.context,
-    title: "monacori",
+    title: APP_TITLE,
     ignoreWhitespace: input.ignoreWhitespace,
     lazyLoad: true, // Electron streams per-file bodies/source over IPC (monacori:get-file / get-source)
     app: true, // gate the integrated terminal (xterm) into the HTML — Electron only

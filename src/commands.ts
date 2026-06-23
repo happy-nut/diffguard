@@ -132,6 +132,10 @@ function launchReviewApp(args: string[]): void {
   if (args.includes("--no-watch")) appArgs.push("--no-watch");
 
   const electronBinary = resolveElectronBinary();
+  // Tell the user which build is about to run. The app-main path disambiguates a local checkout from
+  // the installed package (their versions can match); printed on the shell that ran `mo`, even when
+  // the app itself is spawned detached.
+  console.error(`monacori: launching ${appMainPath()}`);
   if (args.includes("--foreground")) {
     const result = spawnSync(electronBinary, appArgs, { stdio: "inherit" });
     process.exit(result.status ?? 0);

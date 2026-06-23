@@ -71,6 +71,53 @@ mo --base main           # compare against a specific base
 mo --context 20          # show more context around each hunk
 ```
 
+## Development
+
+Working on monacori itself? The globally-installed `mo` runs the **published** package, not your
+checkout — local edits won't appear until you build and run locally.
+
+Run your checkout directly (builds, then launches in the foreground with DevTools open):
+
+```bash
+npm run dev
+```
+
+This reviews the monacori repo itself. To point a local build at another project:
+
+```bash
+MONACORI_DEV=1 node /path/to/monacori/bin/monacori.js --foreground
+```
+
+**Which build is running?** A dev build titles its window `monacori (dev)` and opens DevTools, and
+every launch prints its app path — so a local checkout is distinguishable from the installed package
+even when their version numbers match:
+
+```text
+monacori: launching /…/repos/monacori/dist/app-main.js                       # local checkout
+monacori: launching /…/lib/node_modules/@happy-nut/monacori/dist/app-main.js  # installed package
+```
+
+Prefer the `mo` command pointed at your checkout? `npm link` once, then rebuild after each change:
+
+```bash
+npm link                              # global `mo` now runs this checkout
+npm run build                         # rebuild dist/ after editing src/
+npm unlink -g @happy-nut/monacori     # restore the published `mo`
+```
+
+`src/viewer.client.js` and `src/viewer.css` are copied (not compiled) into `dist/` by the build, so
+re-run `npm run build` (or `npm run dev`) after editing them.
+
+### Tests
+
+```bash
+npm test
+```
+
+`npm test` builds, then runs the jsdom regression suite (`test/*.test.mjs`) against the built `dist/`.
+It guards the core user flows end to end — see [test/USER_FLOWS.md](test/USER_FLOWS.md) — and the same
+suite gates every release.
+
 ## Local State
 
 `monacori init` creates a git-ignored `.monacori/` directory for generated diff reviews, local config, comments, logs, and validation notes. Keep it ignored unless your team intentionally wants to version review artifacts.

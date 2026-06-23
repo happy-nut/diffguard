@@ -31,6 +31,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Gate the release on the core-user-flow tests — a red build never ships.
+      - name: Run tests
+        run: npm test
+
       # No NODE_AUTH_TOKEN: npm authenticates to the registry via OIDC because a
       # Trusted Publisher is configured for @happy-nut/monacori on npmjs.com.
       - name: Publish

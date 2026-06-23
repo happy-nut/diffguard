@@ -124,7 +124,16 @@ var I18N = JSON.parse(document.getElementById('i18n-data')?.textContent || '{}')
 // app restart; file:// localStorage doesn't); browser/serve falls back to localStorage. persistRead
 // returns the bridge value (native) if present, else undefined so callers parse localStorage themselves.
 function persistRead(key) {
-  try { if (window.monacoriSettings && window.monacoriSettings.all && key in window.monacoriSettings.all) return window.monacoriSettings.all[key]; } catch (e) {}
+  // window.monacoriSettings.all crosses Electron's contextBridge, which DEEP-FREEZES every value it
+  // exposes. Returning that frozen object/array directly breaks callers that mutate the result —
+  // reviewComments.push(...) and mergePrompts[kind]=... both throw "object is not extensible". Hand
+  // back a mutable deep copy so the persisted snapshot is a starting point, not a locked one.
+  try {
+    if (window.monacoriSettings && window.monacoriSettings.all && key in window.monacoriSettings.all) {
+      var v = window.monacoriSettings.all[key];
+      return v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v;
+    }
+  } catch (e) {}
   return undefined;
 }
 function persistSave(key, value) {
@@ -1847,7 +1856,7 @@ function refreshComments() {
   if (composerState) {
     var composerFocusTries = 0;
     var tryFocusComposer = function () {
-      var ta = document.querySelector('.mc-composer .mc-input');
+      var ta = activeComposerInput();
       if (!ta) return true;                            // composer gone — stop retrying
       if (document.activeElement === ta) return true;  // already focused — done
       try { ta.focus({ preventScroll: true }); } catch (e) { try { ta.focus(); } catch (e2) {} }
@@ -1879,9 +1888,24 @@ function closeComposer() {
   composerState = null;
   refreshComments();
 }
+// The composer is injected into BOTH the diff and source views (refreshComments renders comments in
+// each), but only one view is on screen at a time — the other lives inside a `.hidden` container with
+// its own, empty textarea. Pick the textarea in the *visible* view so save/auto-focus never grab the
+// off-screen duplicate. This was the "Comment doesn't save" bug: clicking Save ran
+// document.querySelector('.mc-composer .mc-input'), which returns the hidden diff-view textarea first
+// (it precedes #source-viewer in the DOM), so addComment got its empty value and bailed.
+function activeComposerInput() {
+  var inputs = document.querySelectorAll('.mc-composer .mc-input');
+  for (var i = 0; i < inputs.length; i++) {
+    if (inputs[i].closest('#diff-view') && !isDiffViewVisible()) continue;
+    if (inputs[i].closest('#source-viewer') && !isSourceViewerVisible()) continue;
+    return inputs[i];
+  }
+  return inputs[0] || null;
+}
 function saveComposer(ta) {
   if (!composerState) return;
-  var box = ta || document.querySelector('.mc-composer .mc-input');
+  var box = ta || activeComposerInput();
   if (!box) return;
   addComment(composerState.kind, composerState.path, composerState.line, composerState.code, box.value);
   composerState = null;

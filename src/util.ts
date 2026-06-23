@@ -144,3 +144,20 @@ export function listRecentFiles(dir: string, limit: number): string[] {
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
     .slice(0, limit);
 }
+
+// The integrated terminal should behave like the user's own login shell — not like a child of however
+// monacori was launched. When started through npm (`npm run dev`, or a global install run via an npm
+// shim), npm injects npm_config_* / npm_lifecycle_* / npm_package_* vars into our process. Inheriting
+// them into the pty leaks our run's npm config into the user's shell and, with nvm, triggers:
+//   "nvm is not compatible with the npm_config_prefix environment variable …"
+// Strip every npm_*-injected var (npm_config_prefix is the one nvm rejects) and drop undefined holes,
+// so the shell starts clean. Returns a fresh object; the input is not mutated.
+export function sanitizeTerminalEnv(env: NodeJS.ProcessEnv): { [key: string]: string } {
+  const out: { [key: string]: string } = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    if (key.startsWith("npm_")) continue;
+    out[key] = value;
+  }
+  return out;
+}

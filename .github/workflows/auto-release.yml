@@ -60,6 +60,11 @@ jobs:
         if: steps.gate.outputs.go == 'true'
         run: npm ci
 
+      # 핵심 유저 플로우 테스트가 통과해야만 버전업·태그·배포로 넘어간다. 빨간 빌드는 배포되지 않는다.
+      - name: Run tests
+        if: steps.gate.outputs.go == 'true'
+        run: npm test
+
       - name: Configure git as release bot
         if: steps.gate.outputs.go == 'true'
         run: |

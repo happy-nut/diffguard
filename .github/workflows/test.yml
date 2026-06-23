@@ -1,0 +1,33 @@
+name: Test
+
+# 모든 main push와 PR에서 핵심 유저 플로우 회귀 테스트(test/*.test.mjs)를 돌린다. 머지 전에
+# 회귀를 잡는 1차 방어선이며, 배포 경로(publish.yml / auto-release.yml)는 같은 `npm test`를
+# 배포 직전 게이트로 한 번 더 실행한다. 테스트가 무엇을 보장하는지는 test/USER_FLOWS.md 참고.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22] # package.json engines: node >=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm test`의 pretest가 먼저 빌드(tsc + viewer 에셋 복사)하므로, 실제 배포되는 dist 산출물을
+      # 그대로 jsdom에 띄워 검증한다.
+      - name: Run tests
+        run: npm test

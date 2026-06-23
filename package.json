@@ -29,10 +29,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-viewer-assets.mjs",
+    "dev": "npm run build && MONACORI_DEV=1 node bin/monacori.js --foreground",
     "icon": "node scripts/gen-icon.mjs",
     "postinstall": "node scripts/patch-electron-name.mjs && node scripts/fix-pty-spawn-helper.mjs",
     "prepare": "npm run build",
-    "smoke": "npm run build && node dist/cli.js --help"
+    "smoke": "npm run build && node dist/cli.js --help",
+    "pretest": "npm run build",
+    "test": "node --test test/*.test.mjs"
   },
   "keywords": [
     "ai",
@@ -45,6 +48,7 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.15.21",
+    "jsdom": "^29.1.1",
     "typescript": "^5.8.3"
   },
   "engines": {
