@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { DiffFile, DiffHunk, DiffLine, ReviewFileState, SourceFile } from "./types.js";
 import { FLOW_DIR, IMAGE_MAX_BYTES, SOURCE_MAX_FILE_BYTES, SOURCE_MAX_FILES, SOURCE_MAX_TOTAL_BYTES } from "./constants.js";
 import { formatBytes, hashText, isLikelyBinary, languageForPath, stripDiffPath } from "./util.js";
-import { git } from "./git.js";
+import { git, repoRoot } from "./git.js";
 
 export function readUnifiedDiff(options: {
   base?: string;
@@ -13,6 +13,7 @@ export function readUnifiedDiff(options: {
   includeUntracked: boolean;
   ignoreWhitespace?: boolean;
 }): string {
+  const root = repoRoot();
   const args = ["diff", "--no-ext-diff", "--find-renames", `--unified=${options.context}`];
   if (options.ignoreWhitespace) args.push("--ignore-all-space");
   if (options.staged) {
@@ -23,7 +24,7 @@ export function readUnifiedDiff(options: {
   args.push("--");
 
   const result = spawnSync("git", args, {
-    cwd: process.cwd(),
+    cwd: root,
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 100,
   });
@@ -33,20 +34,20 @@ export function readUnifiedDiff(options: {
 
   const chunks = [result.stdout ?? ""];
   if (options.includeUntracked && !options.staged) {
-    chunks.push(readUntrackedDiff(options.context));
+    chunks.push(readUntrackedDiff(options.context, root));
   }
   return chunks.filter(Boolean).join("\n");
 }
 
-function readUntrackedDiff(context: number): string {
-  const files = git(process.cwd(), ["ls-files", "--others", "--exclude-standard"])
+function readUntrackedDiff(context: number, root: string): string {
+  const files = git(root, ["ls-files", "--others", "--exclude-standard"])
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith(`${FLOW_DIR}/`));
   const chunks: string[] = [];
 
   for (const file of files) {
-    const absolute = join(process.cwd(), file);
+    const absolute = join(root, file);
     if (!existsSync(absolute) || !statSync(absolute).isFile()) {
       continue;
     }
@@ -239,13 +240,14 @@ export function collectSourceFiles(diffFiles: DiffFile[]): SourceFile[] {
     }
     changedLinesByPath.set(file.displayPath, nums);
   }
-  const vcsByPath = gitStatusMap(process.cwd());
+  const root = repoRoot();
+  const vcsByPath = gitStatusMap(root);
   for (const file of diffFiles) {
     const kind = vcsByPath.get(file.displayPath);
     if (kind) file.vcs = kind; // color the Changes list from the same status map
   }
   const paths = new Set<string>();
-  const gitFiles = git(process.cwd(), ["ls-files", "--cached", "--others", "--exclude-standard"]);
+  const gitFiles = git(root, ["ls-files", "--cached", "--others", "--exclude-standard"]);
   for (const file of gitFiles.split(/\r?\n/)) {
     const path = file.trim();
     if (path && isSourceCandidate(path)) {
@@ -263,7 +265,7 @@ export function collectSourceFiles(diffFiles: DiffFile[]): SourceFile[] {
   let embeddedBytes = 0;
 
   for (const path of Array.from(paths).sort((a, b) => a.localeCompare(b))) {
-    const absolute = join(process.cwd(), path);
+    const absolute = join(root, path);
     const base: SourceFile = {
       path,
       name: basename(path),

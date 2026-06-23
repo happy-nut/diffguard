@@ -532,6 +532,9 @@ summary.tree-focus { background: var(--bg); }
    file's diff body extends all the way down. */
 #diff-view:not(.hidden) { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 #diff-view .diff2html-container { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+/* Source view mirrors the diff view: fill the content column so the source-body (its last child, after
+   the tabs + toolbar) reaches the bottom even for short files, instead of floating at the top. */
+#source-viewer:not(.hidden) { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .diff2html-container .d2h-wrapper { flex: 1 1 auto; display: flex; flex-direction: column; }
 .diff2html-container .d2h-file-wrapper:last-child { flex: 1 1 auto; }
 .diff2html-container .d2h-file-wrapper:last-child .d2h-files-diff { height: 100%; }
@@ -639,10 +642,13 @@ h1 { margin: 0; font-size: 18px; }
 .source-tab-close:hover { background: var(--line); color: var(--text); }
 .source-body {
   border: 1px solid var(--border);
-  border-radius: 8px;
   overflow: auto;
   background: var(--panel);
   user-select: text;
+  /* Square edges flush to the chrome (no rounded corners), and fill the content column so a short
+     file still reaches the bottom instead of floating at the top — IntelliJ-style. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 /* Extend the line-number gutter (and its divider) to the bottom of the panel so it never stops at the
    last line with an empty strip + cut-off border below it — one continuous gutter. The .num cell is 58px

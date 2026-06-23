@@ -125,3 +125,21 @@ test("per-file comment count badge appears for a commented file", async () => {
   assert.ok(badged, "a count badge is injected next to the changed file");
   v.close();
 });
+
+test("Cmd+Down in the diff view jumps to the file's source (new/working-tree side)", async () => {
+  const v = await loadViewer(html);
+  await v.openDiffFor("src/app.ts");
+  assert.equal(v.visibleView(), "diff");
+
+  v.key("ArrowDown", { metaKey: true }); // Cmd/Ctrl+Down: diff caret -> open that file's source
+  await v.settle(100);
+
+  assert.equal(v.visibleView(), "source", "switched to the source view");
+  assert.equal(v.$("#source-viewer")?.dataset.openPath, "src/app.ts");
+  assert.match(
+    v.$("#source-body").textContent,
+    /export const y = 3/,
+    "source shows the new (working-tree) content, not the old side",
+  );
+  v.close();
+});

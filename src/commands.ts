@@ -132,10 +132,12 @@ function launchReviewApp(args: string[]): void {
   if (args.includes("--no-watch")) appArgs.push("--no-watch");
 
   const electronBinary = resolveElectronBinary();
-  // Tell the user which build is about to run. The app-main path disambiguates a local checkout from
-  // the installed package (their versions can match); printed on the shell that ran `mo`, even when
-  // the app itself is spawned detached.
-  console.error(`monacori: launching ${appMainPath()}`);
+  // In dev only (`npm run dev` sets MONACORI_DEV=1) announce which build is launching, so a local
+  // checkout is distinguishable from the installed package. Normal `mo` runs stay silent — the shell
+  // should be clean, not littered with our internal path.
+  if (process.env.MONACORI_DEV === "1") {
+    console.error(`monacori: launching ${appMainPath()}`);
+  }
   if (args.includes("--foreground")) {
     const result = spawnSync(electronBinary, appArgs, { stdio: "inherit" });
     process.exit(result.status ?? 0);
