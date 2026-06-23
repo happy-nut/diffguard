@@ -20,6 +20,7 @@
     "dist",
     "assets",
     "scripts/patch-electron-name.mjs",
+    "scripts/fix-pty-spawn-helper.mjs",
     "README.md",
     "LICENSE"
   ],
@@ -29,7 +30,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-viewer-assets.mjs",
     "icon": "node scripts/gen-icon.mjs",
-    "postinstall": "node scripts/patch-electron-name.mjs",
+    "postinstall": "node scripts/patch-electron-name.mjs && node scripts/fix-pty-spawn-helper.mjs",
     "prepare": "npm run build",
     "smoke": "npm run build && node dist/cli.js --help"
   },
