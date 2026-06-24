@@ -143,3 +143,19 @@ test("Cmd+Down in the diff view jumps to the file's source (new/working-tree sid
   );
   v.close();
 });
+
+test("background-work progress shows a bar under the footer and hides when done", async () => {
+  const v = await loadViewer(html);
+  const foot = v.$("#footer-progress");
+  assert.ok(foot, "footer progress element is rendered");
+  assert.ok(foot.classList.contains("hidden"), "hidden when idle");
+  assert.equal(typeof v.window.setIndexProgress, "function", "progress hook is reachable");
+
+  v.window.setIndexProgress(3, 10);
+  assert.equal(foot.classList.contains("hidden"), false, "shown while work runs");
+  assert.equal(foot.firstElementChild.style.width, "30%");
+
+  v.window.setIndexProgress(10, 10);
+  assert.ok(foot.classList.contains("hidden"), "hidden again when done");
+  v.close();
+});

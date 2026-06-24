@@ -156,6 +156,21 @@ function applyI18n() {
   var sel = document.getElementById('settings-language');
   if (sel) sel.value = locale;
 }
+// Theme mirrors the locale pattern: persisted choice, applied by toggling data-theme on <html> so the
+// :root[data-theme="light"] palette takes over. Dark is the default (matches the inline :root). Applied
+// immediately at script start to minimize a first-paint flash from the dark default to light.
+var THEME_KEY = 'monacori-theme';
+var theme = (function () {
+  var v = persistRead(THEME_KEY);
+  if (v !== 'light' && v !== 'dark') { try { v = localStorage.getItem(THEME_KEY); } catch (e) {} }
+  return (v === 'light' || v === 'dark') ? v : 'dark';
+})();
+function applyTheme() {
+  document.documentElement.setAttribute('data-theme', theme);
+  var sel = document.getElementById('settings-theme');
+  if (sel) sel.value = theme;
+}
+applyTheme();
 let fileStates = JSON.parse(document.getElementById('file-state-data')?.textContent || '[]');
 let httpEnvironments = JSON.parse(document.getElementById('http-env-data')?.textContent || '{}');
 let httpEnvNames = Object.keys(httpEnvironments);
@@ -2563,6 +2578,18 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function')
       if (mergedModal) { var mk = mergedModal.dataset.kind || 'q'; mergedModal.remove(); openMergedView(mk); }
     });
   }
+  // Theme: flip data-theme on <html> live (no reload) and persist the choice.
+  var themeSel = document.getElementById('settings-theme');
+  if (themeSel) {
+    themeSel.value = theme;
+    themeSel.addEventListener('change', function () {
+      var next = themeSel.value === 'light' ? 'light' : 'dark';
+      if (next === theme) return;
+      theme = next;
+      persistSave(THEME_KEY, theme);
+      applyTheme();
+    });
+  }
 })();
 
 function setTab(name) {
@@ -3399,17 +3426,21 @@ function startSymbolIndex() {
 function setIndexProgress(done, total) {
   var el = document.getElementById('index-status');
   var bar = document.getElementById('index-progress');
-  if (!el) return;
-  if (!total || done >= total) {
-    el.textContent = (total || 0) + ' ' + t('status.indexed');
-    if (bar) bar.classList.add('hidden');
-    return;
+  var foot = document.getElementById('footer-progress');
+  var running = Boolean(total) && done < total;
+  var pct = running ? Math.round(done / total * 100) + '%' : '0%';
+  if (el) {
+    el.textContent = running ? (t('status.indexing') + ' ' + done + '/' + total + '…') : ((total || 0) + ' ' + t('status.indexed'));
   }
-  el.textContent = t('status.indexing') + ' ' + done + '/' + total + '…';
   if (bar) {
-    bar.classList.remove('hidden');
-    var fill = bar.firstElementChild;
-    if (fill) fill.style.width = Math.round(done / total * 100) + '%';
+    bar.classList.toggle('hidden', !running);
+    if (running && bar.firstElementChild) bar.firstElementChild.style.width = pct;
+  }
+  // The same signal, mirrored as a thin bar pinned under the version block at the bottom of the
+  // sidebar — so background work (indexing) is visible even when the toolbar status is out of view.
+  if (foot) {
+    foot.classList.toggle('hidden', !running);
+    if (foot.firstElementChild) foot.firstElementChild.style.width = pct;
   }
 }
 function wordAtDiffCaret() {

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
@@ -27,15 +27,31 @@ const REVIEW_FILE = "app-review.html";
 const WATCH_INTERVAL_MS = 1000;
 
 // Painted immediately while the first review build + HTML render run, so startup shows a spinner instead
-// of a blank window. Inlined as a data: URL so it needs no file on disk and appears before any review work.
-const LOADING_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
-  html,body{margin:0;height:100vh;background:#2b2b2b;color:#9aa4af;display:flex;flex-direction:column;
+// of a blank window. Inlined as a data: URL so it needs no file on disk and appears before any review
+// work. Theme-aware so a light-theme user doesn't get a dark flash before the renderer applies the theme.
+function loadingHtml(light: boolean): string {
+  const bg = light ? "#ffffff" : "#2b2b2b";
+  const fg = light ? "#6e7781" : "#9aa4af";
+  const ring = light ? "#d0d7de" : "#3a3a3a";
+  const accent = light ? "#0969da" : "#4a9eff";
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  html,body{margin:0;height:100vh;background:${bg};color:${fg};display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:18px;
     font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-  .s{width:34px;height:34px;border:3px solid #3a3a3a;border-top-color:#4a9eff;border-radius:50%;
+  .s{width:34px;height:34px;border:3px solid ${ring};border-top-color:${accent};border-radius:50%;
     animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
 </style></head><body><div class="s"></div><div>monacori</div></body></html>`;
+}
+// The persisted theme (set by the renderer via monacoriSettings). Read at startup so the native window
+// chrome + loading screen match before the renderer boots. Defaults to dark.
+function isLightTheme(): boolean {
+  try {
+    return readSettings()["monacori-theme"] === "light";
+  } catch {
+    return false;
+  }
+}
 
 app.setName("monacori");
 
@@ -63,8 +79,26 @@ ipcMain.handle("monacori:self-update", () => {
     timeout: 5 * 60 * 1000,
   });
   if ((result.status ?? 1) === 0) {
-    // Let the renderer paint "Restarting…" before we relaunch with the new code.
-    setTimeout(() => { app.relaunch(); app.exit(0); }, 500);
+    // Let the renderer paint "Restarting…", then start the freshly-installed CLI as a NEW detached
+    // process and exit. app.relaunch() re-runs THIS process, but the global install just replaced our
+    // on-disk dist (and possibly the bundled Electron), so the current process is stale — relaunching
+    // it can boot the old code or fail outright. Spawning `mo` loads the new code; a sanitized env
+    // keeps this update run's npm_* vars out of the fresh process. Falls back to relaunch if spawn fails.
+    setTimeout(() => {
+      try {
+        const child = spawn("mo", [], {
+          cwd: options.root,
+          detached: true,
+          stdio: "ignore",
+          env: sanitizeTerminalEnv(process.env),
+          shell: true,
+        });
+        child.unref();
+      } catch {
+        app.relaunch();
+      }
+      app.exit(0);
+    }, 400);
     return { ok: true };
   }
   const detail = (result.stderr || result.stdout || (result.error && result.error.message) || "npm install failed").trim();
@@ -221,6 +255,7 @@ app.whenReady().then(async () => {
     app.dock.setIcon(appIcon);
   }
 
+  const themeLight = isLightTheme();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -229,7 +264,7 @@ app.whenReady().then(async () => {
     show: false,
     title: APP_TITLE,
     icon: iconPath,
-    backgroundColor: "#2b2b2b",
+    backgroundColor: themeLight ? "#ffffff" : "#2b2b2b",
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath,
@@ -248,7 +283,7 @@ app.whenReady().then(async () => {
   // Paint the window with a spinner immediately, then build the (potentially heavy) review off the first
   // paint and swap it in. The first build used to run synchronously *before* the window existed, so the
   // screen stayed blank for the first few seconds of startup; now the user sees a loading screen instead.
-  await mainWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(LOADING_HTML));
+  await mainWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(loadingHtml(themeLight)));
   // Give the loading spinner a few frames to actually paint before the (synchronous) first build blocks
   // the main process — otherwise the spinner looks frozen until the build finishes. The boot overlay in
   // the review HTML then takes over, so there's no blank gap when loadFile swaps the page in.

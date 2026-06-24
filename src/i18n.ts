@@ -70,6 +70,9 @@ export const MESSAGES: Record<string, Record<string, string>> = {
 
     // Settings — General
     "settings.language": "Language",
+    "settings.theme": "Theme",
+    "theme.dark": "Dark",
+    "theme.light": "Light",
     "settings.checkingUpdates": "Checking for updates…",
     "settings.updateRestart": "Update & Restart",
     "settings.upToDate": "Up to date",
@@ -210,6 +213,9 @@ export const MESSAGES: Record<string, Record<string, string>> = {
 
     // Settings — General
     "settings.language": "언어",
+    "settings.theme": "테마",
+    "theme.dark": "다크",
+    "theme.light": "라이트",
     "settings.checkingUpdates": "업데이트 확인 중…",
     "settings.updateRestart": "업데이트 후 재시작",
     "settings.upToDate": "최신 버전입니다",

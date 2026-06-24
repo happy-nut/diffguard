@@ -161,6 +161,7 @@ export function renderDiffHtml(input: {
       : `<div class="tab-panel" id="files-panel">${sourceNav}</div>`,
     "</div>",
     `<div class="sidebar-footer"><span class="app-version">monacori${packageVersion ? " v" + escapeHtml(packageVersion) : ""}</span><span id="app-update-flag" class="app-update-flag hidden" data-i18n="sidebar.updateAvailable" data-i18n-title="settings.updateAvailable" title="Update available">update available</span><button type="button" id="terminal-toggle" class="settings-btn terminal-toggle hidden" data-i18n-title="terminal.toggle" title="Toggle terminal (Ctrl+\`)" aria-label="Toggle terminal"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l4 5-4 5"/><path d="M13 17h6"/></svg></button><button type="button" id="app-info-btn" class="settings-btn" aria-haspopup="dialog" data-i18n-aria="about.title" data-i18n-title="about.title" aria-label="About monacori" title="About monacori">⚙</button></div>`,
+    '<div id="footer-progress" class="footer-progress hidden" aria-hidden="true"><div class="footer-progress-bar"></div></div>',
     "</aside>",
     '<div class="sidebar-resizer" aria-hidden="true"></div>',
     '<main class="content">',
@@ -212,6 +213,8 @@ export function renderDiffHtml(input: {
     '<button type="button" id="app-info-update" class="plain-button app-info-update hidden" data-i18n="settings.updateRestart">Update &amp; Restart</button>',
     '<label class="settings-label" for="settings-language" data-i18n="settings.language">Language</label>',
     '<select id="settings-language" class="settings-select"><option value="en">English</option><option value="ko">한국어</option></select>',
+    '<label class="settings-label" for="settings-theme" data-i18n="settings.theme">Theme</label>',
+    '<select id="settings-theme" class="settings-select"><option value="dark" data-i18n="theme.dark">Dark</option><option value="light" data-i18n="theme.light">Light</option></select>',
     '<div class="app-info-keys">' +
     '<div class="app-info-keys-h" data-i18n="settings.kbd.title">Keyboard shortcuts</div>' +
     '<div class="keys-cat" data-i18n="settings.kbd.cat.nav">Navigation</div>' +
