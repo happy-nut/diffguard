@@ -218,9 +218,9 @@ export function renderDiffHtml(input: {
     '<div id="app-info-status" class="app-info-status" data-i18n="settings.checkingUpdates">Checking for updates…</div>',
     '<button type="button" id="app-info-update" class="plain-button app-info-update hidden" data-i18n="settings.updateRestart">Update &amp; Restart</button>',
     '<label class="settings-label" for="settings-language" data-i18n="settings.language">Language</label>',
-    '<select id="settings-language" class="settings-select"><option value="en">English</option><option value="ko">한국어</option></select>',
+    '<button type="button" id="settings-language" class="settings-select mc-select" data-i18n-aria="settings.language"></button>',
     '<label class="settings-label" for="settings-theme" data-i18n="settings.theme">Theme</label>',
-    '<select id="settings-theme" class="settings-select"><option value="dark" data-i18n="theme.dark">Dark</option><option value="light" data-i18n="theme.light">Light</option></select>',
+    '<button type="button" id="settings-theme" class="settings-select mc-select" data-i18n-aria="settings.theme"></button>',
     '<div class="app-info-keys">' +
     '<div class="app-info-keys-h" data-i18n="settings.kbd.title">Keyboard shortcuts</div>' +
     '<div class="keys-cat" data-i18n="settings.kbd.cat.nav">Navigation</div>' +

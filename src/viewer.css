@@ -262,6 +262,10 @@ body {
   font: 12px/1.55 ui-sans-serif, system-ui, sans-serif;
 }
 .settings-select:focus { outline: none; border-color: var(--active); }
+/* The settings dropdowns are buttons (custom dropdown), not native <select> — style them to read like one. */
+.settings-select.mc-select { text-align: left; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; min-width: 130px; }
+.settings-select.mc-select::after { content: '▾'; margin-left: auto; opacity: 0.55; }
+.settings-select.mc-select:hover { border-color: var(--active); }
 .settings-actions { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
 .settings-saved { font-size: 12px; color: var(--active); }
 .app-info-keys-h { font-weight: 600; color: var(--text); margin-bottom: 8px; }
@@ -859,6 +863,10 @@ body.mc-composing .source-row.cursor-line .num { color: inherit; }
 .mc-dropdown { position: fixed; z-index: 70; min-width: 150px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); padding: 4px; }
 .mc-dropdown-item { display: block; width: 100%; text-align: left; padding: 7px 12px; border: 0; background: transparent; color: var(--text); border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .mc-dropdown-item.active, .mc-dropdown-item:hover { background: var(--active); color: #fff; }
+#mc-toasts { position: fixed; left: 16px; bottom: 16px; z-index: 80; display: flex; flex-direction: column; gap: 8px; max-width: 360px; pointer-events: none; }
+.mc-toast { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-left: 3px solid var(--active); border-radius: 8px; padding: 10px 14px; font-size: 13px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); opacity: 0; transform: translateY(8px); transition: opacity .25s ease, transform .25s ease; }
+.mc-toast.show { opacity: 1; transform: translateY(0); }
+.mc-toast.hide { opacity: 0; transform: translateY(8px); }
 /* Prompt memo: split editor | live Markdown preview inside the standard modal shell. */
 .mc-memo-body { display: grid; grid-template-columns: 1fr 1fr; min-height: 0; height: 100%; }
 .mc-memo-edit { height: 100%; border-right: 1px solid var(--border); }

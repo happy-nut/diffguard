@@ -78,6 +78,17 @@ export async function loadViewer(html, opts = {}) {
           },
         };
       }
+      // Electron's diff-update bridge: capture the listener so a test can push a watch-refresh payload.
+      if (opts.menuBridge) {
+        window.monacoriMenu = { onDiffUpdate: (cb) => { window.__diffUpdateCb = cb; } };
+      }
+      // lazy-LOAD source bridge: serve the source content (lazySourceData JSON) on demand, as Electron/serve do.
+      if (opts.lazySourceData != null) {
+        window.monacoriFile = {
+          getSourceData: () => Promise.resolve(opts.lazySourceData),
+          get: () => Promise.resolve(""),
+        };
+      }
     },
   });
 
@@ -105,6 +116,13 @@ class Viewer {
   /** Wait for the viewer's async work (focus retry interval, in-place re-renders) to settle. */
   settle(ms = 50) {
     return tick(ms);
+  }
+  /** Simulate a watch refresh (Electron diff-update) with a hand-built payload. Needs { menuBridge: true }. */
+  async pushDiffUpdate(payload) {
+    const cb = this.window.__diffUpdateCb;
+    if (!cb) throw new Error("pushDiffUpdate: no diff-update listener (pass { menuBridge: true })");
+    cb(payload);
+    await this.settle(80);
   }
   /** Read the persisted comments exactly as the viewer wrote them to localStorage. */
   storedComments() {
@@ -186,6 +204,14 @@ class Viewer {
 
   // ---- viewer vocabulary -----------------------------------------------------------------------
   async openSourceFile(path) {
+    // lazy-LOAD keeps the Files tree as an inert island until its tab is shown — materialize it first.
+    if (!this.document.querySelector(".source-link")) {
+      const filesTab = this.document.querySelector('.tab[data-tab="files"]');
+      if (filesTab) {
+        this.click(filesTab);
+        await this.settle(40);
+      }
+    }
     const link =
       this.document.querySelector(`.source-link[data-source-file="${cssEscape(path)}"]`) ||
       this.document.querySelector(".source-link");

@@ -397,3 +397,37 @@ test("merged view: caret is interactive (not readOnly) and Opt+Arrow steps betwe
   assert.equal(area.selectionStart, headers[0], "Opt+Up jumps back to the first comment header");
   v.close();
 });
+
+test("comment tracking: follows a moved line; dropped + toasted when the snapshot line vanishes", async () => {
+  const { html } = await makeReviewHtml([
+    { path: "src/app.ts", before: "export const x = 1;\nexport const y = 2;\n", after: "export const x = 1;\nexport const y = 3;\n" },
+  ]);
+  const v = await loadViewer(html, { menuBridge: true });
+  await v.openSourceFile("src/app.ts");
+  await v.clickSourceLine(0); // caret on "export const x = 1;"
+  await v.openComposer("q");
+  await v.writeAndSave("track me");
+  assert.equal(v.storedComments().length, 1, "comment saved");
+  assert.equal(v.storedComments()[0].code, "export const x = 1;", "snapshot is the commented line");
+
+  let seq = 0;
+  const update = (path, content) => ({
+    signature: "v" + ++seq,
+    diffContainer: "", changesPanel: "", filesTree: "", reviewStatus: "",
+    fileStates: [],
+    sourceFilesMeta: [{ path, name: path.split("/").pop(), language: "typescript", content, size: content.length, embedded: true, changed: true, changedLines: [], signature: "sig" + seq }],
+    httpEnvironments: {},
+  });
+
+  // (a) the file changed but the commented line just moved down two rows — the comment follows it
+  await v.pushDiffUpdate(update("src/app.ts", "// added\n// lines\nexport const x = 1;\nexport const y = 3;\n"));
+  assert.equal(v.storedComments().length, 1, "comment retained when its line is found");
+  assert.equal(v.storedComments()[0].line, 3, "comment followed its snapshot line to row 3");
+  assert.equal(v.$(".mc-toast"), null, "no toast while the comment is tracked");
+
+  // (b) the commented line is gone — the comment is dropped and a toast announces it
+  await v.pushDiffUpdate(update("src/app.ts", "export const z = 9;\nexport const w = 8;\n"));
+  assert.equal(v.storedComments().length, 0, "comment dropped when its line vanished");
+  assert.ok(v.$(".mc-toast"), "a bottom-left toast announced the dropped comment");
+  v.close();
+});

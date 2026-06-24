@@ -147,14 +147,36 @@ var locale = (function () {
   return (v === 'ko' || v === 'en') ? v : 'en';
 })();
 function t(key) { var m = (I18N[locale] || I18N.en || {}); return (m && key in m) ? m[key] : ((I18N.en && I18N.en[key]) || key); }
+var langSelectRef = null, themeSelectRef = null;
+// Replace a native <select> with a button that opens our custom dropdown (consistent with the comment
+// dropdown + themable; native <select> popups ignore the app theme). getOptions() -> [{value,label}];
+// returns { render } so localized labels can be refreshed on a language switch.
+function setupCustomSelect(id, getOptions, getCurrent, onPick) {
+  var el = document.getElementById(id);
+  if (!el) return null;
+  function render() {
+    var cur = getCurrent();
+    var match = getOptions().filter(function (o) { return o.value === cur; })[0];
+    el.textContent = match ? match.label : cur;
+  }
+  el.addEventListener('click', function (e) {
+    e.preventDefault();
+    var r = el.getBoundingClientRect(), cur = getCurrent();
+    showCustomDropdown(r.left, r.bottom + 4, getOptions().map(function (o) {
+      return { label: (o.value === cur ? '✓  ' : '  ') + o.label, onSelect: function () { onPick(o.value); render(); } };
+    }));
+  });
+  render();
+  return { render: render };
+}
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t(el.getAttribute('data-i18n')); });
   document.querySelectorAll('[data-i18n-ph]').forEach(function (el) { el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph'))); });
   document.querySelectorAll('[data-i18n-title]').forEach(function (el) { el.setAttribute('title', t(el.getAttribute('data-i18n-title'))); });
   document.querySelectorAll('[data-i18n-aria]').forEach(function (el) { el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria'))); });
   document.documentElement.lang = locale;
-  var sel = document.getElementById('settings-language');
-  if (sel) sel.value = locale;
+  if (langSelectRef) langSelectRef.render();
+  if (themeSelectRef) themeSelectRef.render(); // theme labels are localized — refresh on a language switch too
 }
 // Theme mirrors the locale pattern: persisted choice, applied by toggling data-theme on <html> so the
 // :root[data-theme="light"] palette takes over. Dark is the default (matches the inline :root). Applied
@@ -167,8 +189,7 @@ var theme = (function () {
 })();
 function applyTheme() {
   document.documentElement.setAttribute('data-theme', theme);
-  var sel = document.getElementById('settings-theme');
-  if (sel) sel.value = theme;
+  if (themeSelectRef) themeSelectRef.render();
 }
 applyTheme();
 let fileStates = JSON.parse(document.getElementById('file-state-data')?.textContent || '[]');
@@ -213,6 +234,7 @@ function loadSourceData() {
     sourceLoaded = true;
     sourceLoading = false;
     scheduleSymbolIndex();
+    remapComments(); // content just arrived — reconcile comment anchors against it
     if (pendingSourceOpen) { var po = pendingSourceOpen; pendingSourceOpen = null; openSourceFile(po.path, po.shouldSwitch); }
     else if (isSourceViewerVisible() && document.getElementById('source-viewer').dataset.openPath) { openSourceFile(document.getElementById('source-viewer').dataset.openPath, false); }
     if (pendingSymbol) { var s = pendingSymbol; pendingSymbol = null; goToDefOrUsages(s); }
@@ -1706,6 +1728,52 @@ function handleDiffCaretKey(event) {
 
 // ===== Review comments: questions ("?") and change-requests (">") =====
 // (COMMENTS_KEY / reviewComments / commentSeq / composerState are declared near the top of the script)
+// Bottom-left, non-blocking toast stack; each toast auto-dismisses. Used to tell the user when a file
+// change made some comments untrackable (they were removed).
+function showToast(message) {
+  var stack = document.getElementById('mc-toasts');
+  if (!stack) { stack = document.createElement('div'); stack.id = 'mc-toasts'; document.body.appendChild(stack); }
+  var el = document.createElement('div');
+  el.className = 'mc-toast';
+  el.textContent = message;
+  stack.appendChild(el);
+  requestAnimationFrame(function () { el.classList.add('show'); });
+  setTimeout(function () {
+    el.classList.add('hide');
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+  }, 4500);
+}
+// When a file changes, follow each comment to its snapshot line (c.code) in the new content: same line if
+// unchanged, else the nearest exact match of that line. If the line can't be found the change is too large
+// to trust — drop the comment and toast. Files whose content isn't loaded yet (lazy) are skipped here and
+// reconciled once loadSourceData brings the content in.
+function remapComments() {
+  if (!reviewComments.length) return;
+  var dropped = [], moved = 0;
+  reviewComments = reviewComments.filter(function (c) {
+    var file = sourceByPath.get(c.path);
+    if (!file || !file.embedded || typeof file.content !== 'string' || !file.content) return true;
+    var code = c.code == null ? '' : String(c.code);
+    if (!code.trim()) return true;
+    var lines = file.content.split(/\r?\n/);
+    if (lines[c.line - 1] === code) return true;
+    var best = -1, bestDist = Infinity;
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i] === code) { var d = Math.abs(i - (c.line - 1)); if (d < bestDist) { bestDist = d; best = i; } }
+    }
+    if (best >= 0) { if (c.line !== best + 1) moved++; c.line = best + 1; return true; }
+    dropped.push(c);
+    return false;
+  });
+  if (!dropped.length && !moved) return; // nothing changed — skip the save/re-render
+  saveComments();
+  var byPath = {};
+  dropped.forEach(function (c) { byPath[c.path] = (byPath[c.path] || 0) + 1; });
+  Object.keys(byPath).forEach(function (p) {
+    showToast(t('toast.commentsDropped').replace('{n}', byPath[p]).replace('{file}', String(p).split('/').pop()));
+  });
+  refreshComments();
+}
 function saveComments() {
   persistSave(COMMENTS_KEY, reviewComments);
 }
@@ -1756,14 +1824,16 @@ function currentCommentTarget() {
       var f = Math.min(sa, sb), t = Math.max(sa, sb);
       return { path: viewerCursor.path, line: t + 1, code: selText, from: f + 1, to: t + 1, side: null };
     }
-    return { path: viewerCursor.path, line: viewerCursor.lineIndex + 1, code: '', from: null, to: null, side: null };
+    var scaretFile = sourceByPath.get(viewerCursor.path);
+    var scaretCode = (scaretFile && typeof scaretFile.content === 'string') ? (scaretFile.content.split(/\r?\n/)[viewerCursor.lineIndex] || '') : '';
+    return { path: viewerCursor.path, line: viewerCursor.lineIndex + 1, code: scaretCode, from: null, to: null, side: null };
   }
   // Diff view: prefer the explicit diff caret when there is no text selection.
   if (!hasSel && diffCursor && isDiffViewVisible()) {
     var dwrap = diffWrapperByPath(diffCursor.path);
     var drow = dwrap ? diffRowAt(dwrap, diffCursor.side, diffCursor.rowIndex) : null;
     var dline = drow ? diffLineNumber(drow) : null;
-    if (dline != null) return { path: diffCursor.path, line: dline, code: '', from: null, to: null, side: null };
+    if (dline != null) return { path: diffCursor.path, line: dline, code: diffLineText(drow) || '', from: null, to: null, side: null };
   }
   // Diff view with a selection (or click): anchor at the LAST line so the composer drops BELOW the
   // drag; capture the selected code + line span (used to keep the drag highlighted via .mc-sel-line).
@@ -2751,35 +2821,28 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function')
   if (resetBtn) resetBtn.addEventListener('click', function () { saveMergePrompt('q', ''); saveMergePrompt('c', ''); fill(); flash(); });
   // Language: live-switch the whole UI (no reload). Persist, re-apply the static chrome, then re-render
   // any currently-shown dynamic text (open composer / merged modal / index status) so it follows too.
-  var langSel = document.getElementById('settings-language');
-  if (langSel) {
-    langSel.value = locale;
-    langSel.addEventListener('change', function () {
-      var next = langSel.value === 'ko' ? 'ko' : 'en';
+  langSelectRef = setupCustomSelect('settings-language',
+    function () { return [{ value: 'en', label: 'English' }, { value: 'ko', label: '한국어' }]; },
+    function () { return locale; },
+    function (next) {
       if (next === locale) return;
       locale = next;
       persistSave(LOCALE_KEY, locale);
       applyI18n();
-      // Merge-prompt placeholders are locale-dependent defaults; refresh them while the panel is open.
-      fill();
-      // Re-render dynamic, currently-visible text in the new locale.
+      fill(); // merge-prompt placeholders are locale-dependent defaults
       try { if (typeof refreshComments === 'function') refreshComments(); } catch (e) {}
       var mergedModal = document.getElementById('mc-modal');
       if (mergedModal) { var mk = mergedModal.dataset.kind || 'q'; mergedModal.remove(); openMergedView(mk); }
     });
-  }
-  // Theme: flip data-theme on <html> live (no reload) and persist the choice.
-  var themeSel = document.getElementById('settings-theme');
-  if (themeSel) {
-    themeSel.value = theme;
-    themeSel.addEventListener('change', function () {
-      var next = themeSel.value === 'light' ? 'light' : 'dark';
+  themeSelectRef = setupCustomSelect('settings-theme',
+    function () { return [{ value: 'dark', label: t('theme.dark') }, { value: 'light', label: t('theme.light') }]; },
+    function () { return theme; },
+    function (next) {
       if (next === theme) return;
       theme = next;
       persistSave(THEME_KEY, theme);
       applyTheme();
     });
-  }
 })();
 
 function setTab(name) {
@@ -2934,6 +2997,7 @@ function applyDiffUpdate(u) {
   applyI18n();
   populateHttpEnvSelect();
   initSourceTreeFolds();
+  remapComments(); // follow/drop comments whose anchor line moved or vanished in the new build
   refreshComments();
 
   // 5) Best-effort restore of what the user was looking at.

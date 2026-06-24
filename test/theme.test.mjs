@@ -23,11 +23,18 @@ test("defaults to dark, with a theme selector in settings", async () => {
   v.close();
 });
 
+// The theme/language pickers are now custom dropdowns (a button that opens .mc-dropdown), not native
+// <select>s, so a pick is: click the trigger, then click the matching .mc-dropdown-item.
+function pickOption(v, triggerId, match) {
+  v.$(triggerId).click();
+  const item = [...v.document.querySelectorAll(".mc-dropdown-item")].find((b) => match.test(b.textContent));
+  assert.ok(item, `dropdown offers an option matching ${match}`);
+  item.click();
+}
+
 test("switching to light flips data-theme on <html> and persists", async () => {
   const v = await loadViewer(html);
-  const sel = v.$("#settings-theme");
-  sel.value = "light";
-  sel.dispatchEvent(new v.window.Event("change", { bubbles: true }));
+  pickOption(v, "#settings-theme", /light/i);
   await v.settle(20);
 
   assert.equal(v.document.documentElement.getAttribute("data-theme"), "light");
@@ -37,9 +44,7 @@ test("switching to light flips data-theme on <html> and persists", async () => {
 
 test("the light theme is restored on reopen", async () => {
   const v1 = await loadViewer(html);
-  const sel = v1.$("#settings-theme");
-  sel.value = "light";
-  sel.dispatchEvent(new v1.window.Event("change", { bubbles: true }));
+  pickOption(v1, "#settings-theme", /light/i);
   await v1.settle(20);
   const snapshot = v1.exportStorage();
   v1.close();
@@ -50,6 +55,6 @@ test("the light theme is restored on reopen", async () => {
     "light",
     "data-theme is light on first paint after reopen",
   );
-  assert.equal(v2.$("#settings-theme").value, "light", "the selector reflects the restored theme");
+  assert.match(v2.$("#settings-theme").textContent, /light/i, "the trigger reflects the restored theme");
   v2.close();
 });
