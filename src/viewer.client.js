@@ -846,7 +846,11 @@ function isTreeRowVisible(el) {
 function treeRows() {
   const panel = document.querySelector('.tab-panel:not(.hidden)');
   if (!panel) return [];
-  return Array.from(panel.querySelectorAll('summary, .file-link')).filter((el) => el.getClientRects().length > 0 && isTreeRowVisible(el));
+  // isTreeRowVisible walks ancestor <details> (cheap, layout-free) and already excludes rows inside
+  // collapsed folders. The previous extra `getClientRects().length > 0` check forced a SYNCHRONOUS
+  // reflow per node — 6k forced layouts on every arrow key in a large source tree, which froze input.
+  // The details walk makes the rects check redundant, so drop it.
+  return Array.from(panel.querySelectorAll('summary, .file-link')).filter(isTreeRowVisible);
 }
 
 function focusTree(index) {
