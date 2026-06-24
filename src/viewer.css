@@ -1084,7 +1084,7 @@ h1 { margin: 0; font-size: 18px; }
 }
 .md-cell > :first-child { margin-top: 0; }
 .md-cell > :last-child { margin-bottom: 0; }
-.md-h { line-height: 1.3; margin: 0.25em 0; font-weight: 650; color: #d7e0ea; }
+.md-h { line-height: 1.3; margin: 0.25em 0; font-weight: 650; color: var(--text); }
 .md-h1 { font-size: 1.7em; }
 .md-h2 { font-size: 1.4em; }
 .md-h3 { font-size: 1.18em; }
@@ -1093,7 +1093,7 @@ h1 { margin: 0; font-size: 18px; }
 .md-p { margin: 0.2em 0; }
 .md-cell a { color: var(--active); text-decoration: none; }
 .md-cell a:hover { text-decoration: underline; }
-.md-cell strong { color: #c9d4df; }
+.md-cell strong { color: var(--text); }
 .md-cell del { color: var(--muted); }
 .md-cell code {
   font: 0.86em Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
