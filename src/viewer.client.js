@@ -2820,8 +2820,13 @@ function updateTreeVisibility(root, query) {
 
 function openDefaultSourceFile() {
   const isReadme = (candidate) => /^readme(\.|$)/i.test(candidate.name || '');
+  const depthOf = (candidate) => (candidate.path || '').split('/').length;
+  // Prefer the TOP-MOST README (root before any nested one), not just the first match in tree order.
+  const rootReadme = sourceFiles
+    .filter((candidate) => candidate.embedded && isReadme(candidate))
+    .sort((a, b) => depthOf(a) - depthOf(b))[0];
   const file = sourceFiles.find((candidate) => candidate.changed && candidate.embedded)
-    || sourceFiles.find((candidate) => candidate.embedded && isReadme(candidate)) // prefer README when nothing changed
+    || rootReadme // top-most README when nothing changed
     || sourceFiles.find((candidate) => candidate.embedded)
     || sourceFiles.find((candidate) => candidate.changed)
     || sourceFiles[0];
