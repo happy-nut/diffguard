@@ -175,3 +175,39 @@ test("clean tree (no changes): opens the file view with the top-most README, not
   );
   v.close();
 });
+
+test("markdown renders embedded HTML (GitHub-style), not escaped", async () => {
+  const { html } = await makeReviewHtml([
+    {
+      path: "README.md",
+      before: "# old\n",
+      after: '<div align="center">\n<h1>Title</h1>\n<img src="https://example.com/b.png" alt="x">\n</div>\n\n## Section\n',
+    },
+  ]);
+  const v = await loadViewer(html);
+  await v.openSourceFile("README.md");
+  const body = v.$("#source-body");
+  assert.ok(body.querySelector(".md-html h1"), "embedded <h1> is rendered, not escaped text");
+  assert.ok(body.querySelector(".md-html img"), "embedded <img> is rendered");
+  assert.ok(body.querySelector(".md-h"), "markdown (## Section) still renders alongside HTML");
+  v.close();
+});
+
+test("markdown HTML is sanitized (scripts + event handlers stripped)", async () => {
+  const { html } = await makeReviewHtml([
+    {
+      path: "README.md",
+      before: "# old\n",
+      after: '<div onclick="alert(1)">hi</div>\n<script>alert(2)</script>\n<img src="x" onerror="alert(3)">\n',
+    },
+  ]);
+  const v = await loadViewer(html);
+  await v.openSourceFile("README.md");
+  const body = v.$("#source-body");
+  assert.equal(body.querySelector("script"), null, "<script> is removed");
+  const div = body.querySelector(".md-html div");
+  assert.equal(div && div.getAttribute("onclick"), null, "onclick is removed");
+  const img = body.querySelector(".md-html img");
+  assert.equal(img && img.getAttribute("onerror"), null, "onerror is removed");
+  v.close();
+});

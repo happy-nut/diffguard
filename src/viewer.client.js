@@ -3750,6 +3750,34 @@ function renderInlineMd(text) {
   return s;
 }
 
+// Render HTML embedded in Markdown (GitHub-style) safely. Parse in an INERT <template> — scripts don't
+// run and resources don't load there — then strip dangerous tags + on*/javascript: attributes before
+// returning the HTML. The result is injected via innerHTML, so only the sanitized subset survives.
+function sanitizeHtml(html) {
+  var tpl = document.createElement('template');
+  tpl.innerHTML = String(html);
+  var BAD = { SCRIPT: 1, STYLE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, LINK: 1, META: 1, BASE: 1, FORM: 1, INPUT: 1, BUTTON: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1 };
+  var walk = function (node) {
+    var kids = Array.prototype.slice.call(node.children || []);
+    for (var k = 0; k < kids.length; k++) {
+      var el = kids[k];
+      if (BAD[el.tagName]) { el.parentNode.removeChild(el); continue; }
+      var attrs = Array.prototype.slice.call(el.attributes);
+      for (var a = 0; a < attrs.length; a++) {
+        var nm = attrs[a].name.toLowerCase();
+        if (nm.indexOf('on') === 0) { el.removeAttribute(attrs[a].name); continue; }
+        if ((nm === 'href' || nm === 'src' || nm === 'xlink:href' || nm === 'srcset')
+          && /^\s*(javascript|vbscript|data:text\/html):/i.test(attrs[a].value || '')) {
+          el.removeAttribute(attrs[a].name);
+        }
+      }
+      walk(el);
+    }
+  };
+  walk(tpl.content);
+  return tpl.innerHTML;
+}
+
 function mdFenceLang(lang) {
   var l = (lang || '').toLowerCase();
   if (l === 'js' || l === 'jsx' || l === 'ts' || l === 'tsx') return 'typescript';
@@ -3785,6 +3813,16 @@ function renderMarkdownBlocks(content) {
       continue;
     }
     if (/^\s*$/.test(line)) { i++; continue; }
+    // Raw HTML block (GitHub-flavored Markdown): a line beginning with a tag. Accumulate to the next
+    // blank line and render it as sanitized HTML, so README markup (<div>, <img>, <table>, …) shows
+    // rendered instead of as escaped text.
+    if (/^\s*<(\/?[a-zA-Z][\w-]*|!--)/.test(line)) {
+      var hbuf = [line];
+      i++;
+      while (i < lines.length && !/^\s*$/.test(lines[i])) { hbuf.push(lines[i]); i++; }
+      blocks.push({ line: start, html: '<div class="md-html">' + sanitizeHtml(hbuf.join('\n')) + '</div>' });
+      continue;
+    }
     var h = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
     if (h) { var lv = h[1].length; blocks.push({ line: start, html: '<h' + lv + ' class="md-h md-h' + lv + '">' + renderInlineMd(h[2].replace(/\s+#+\s*$/, '')) + '</h' + lv + '>' }); i++; continue; }
     if (/^\s*([-*_])\s*(\1\s*){2,}$/.test(line)) { blocks.push({ line: start, html: '<hr class="md-hr">' }); i++; continue; }
