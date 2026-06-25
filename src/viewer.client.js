@@ -164,7 +164,7 @@ function setupCustomSelect(id, getOptions, getCurrent, onPick) {
     var r = el.getBoundingClientRect(), cur = getCurrent();
     showCustomDropdown(r.left, r.bottom + 4, getOptions().map(function (o) {
       return { label: (o.value === cur ? '✓  ' : '  ') + o.label, onSelect: function () { onPick(o.value); render(); } };
-    }));
+    }), r.top - 4);
   });
   render();
   return { render: render };
@@ -2091,7 +2091,28 @@ function saveMergePrompt(kind, text) {
 
 // Reusable custom dropdown (keyboard + mouse). options: [{ label, onSelect }]. First item is pre-selected;
 // Arrow keys move, Enter chooses, Esc / click-outside dismiss. Replaces native <select>/menus everywhere.
-function showCustomDropdown(x, y, options) {
+// Approximate the caret's pixel position in the (monospace) merged textarea so the dropdown can open right
+// under it — and flip above when there isn't room below. Returns { x, top (caret line top), below }.
+function mergedCaretXY(area) {
+  var pos = area.selectionStart || 0;
+  var nl = area.value.slice(0, pos).split('\n');
+  var lineNum = nl.length - 1;
+  var col = nl[lineNum].length;
+  var cs = getComputedStyle(area);
+  var lineH = parseFloat(cs.lineHeight) || 18;
+  var rect = area.getBoundingClientRect();
+  var span = document.createElement('span');
+  span.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+  span.style.font = cs.font;
+  span.textContent = 'MMMMMMMMMMMMMMMMMMMM';
+  document.body.appendChild(span);
+  var charW = span.getBoundingClientRect().width / 20;
+  span.remove();
+  var caretTop = rect.top + (parseFloat(cs.paddingTop) || 0) + lineNum * lineH - area.scrollTop;
+  var x = Math.min(rect.left + (parseFloat(cs.paddingLeft) || 0) + col * charW, rect.right - 24);
+  return { x: x, top: caretTop, below: caretTop + lineH + 2 };
+}
+function showCustomDropdown(x, y, options, flipTop) {
   var existing = document.getElementById('mc-dropdown');
   if (existing) existing.remove();
   var dd = document.createElement('div');
@@ -2116,9 +2137,16 @@ function showCustomDropdown(x, y, options) {
     item.addEventListener('mousemove', function () { setActive(i); });
     dd.appendChild(item);
   });
-  dd.style.left = Math.round(x) + 'px';
-  dd.style.top = Math.round(y) + 'px';
   document.body.appendChild(dd);
+  // Position after measuring: open at (x, y); flip above (flipTop) when it would overflow the bottom,
+  // and nudge in from the right/bottom edges so it never clips offscreen.
+  var ddr = dd.getBoundingClientRect();
+  var top = y, left = x;
+  if (typeof flipTop === 'number' && top + ddr.height > window.innerHeight - 8) top = Math.max(8, flipTop - ddr.height);
+  else if (top + ddr.height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - ddr.height - 8);
+  if (left + ddr.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - ddr.width - 8);
+  dd.style.left = Math.round(left) + 'px';
+  dd.style.top = Math.round(top) + 'px';
   document.addEventListener('keydown', onKey, true);
   document.addEventListener('mousedown', onOutside, true);
 }
@@ -2221,20 +2249,20 @@ function openMergedView(kind) {
     e.stopPropagation();
     var seqs = mergedCommentSeqs(kind, area.selectionStart, area.selectionEnd);
     if (!seqs.length) return;
-    var rect = area.getBoundingClientRect();
-    var x = rect.left + 24, y = rect.top + 48;
+    var cxy = mergedCaretXY(area);
+    var x = cxy.x, y = cxy.below, flipTop = cxy.top;
     var rerender = function () {
       if (!reviewComments.filter(function (c) { return c.kind === kind; }).length) { modal.remove(); return; }
       area.value = buildMergedText(kind);
     };
     if (area.selectionStart !== area.selectionEnd || seqs.length > 1) {
-      showCustomDropdown(x, y, [{ label: t('dropdown.remove'), onSelect: function () { seqs.forEach(deleteComment); rerender(); } }]);
+      showCustomDropdown(x, y, [{ label: t('dropdown.remove'), onSelect: function () { seqs.forEach(deleteComment); rerender(); } }], flipTop);
     } else {
       var seq = seqs[0];
       showCustomDropdown(x, y, [
         { label: t('dropdown.navigate'), onSelect: function () { modal.remove(); navigateToComment(seq); } },
         { label: t('dropdown.remove'), onSelect: function () { deleteComment(seq); rerender(); } },
-      ]);
+      ], flipTop);
     }
   });
   closeBtn.addEventListener('click', function () { modal.remove(); });
@@ -2264,12 +2292,12 @@ function openMergedView(kind) {
   document.body.appendChild(modal);
   // Focus the send button (Enter starts pane-pick) when present, else the read-only text. Electron
   // async-restores focus to <body>, so retry briefly (same as the composer).
-  var modalFocusTarget = sendBtn || area;
+  var modalFocusTarget = area; // focus the text (not the send button) so the caret is visible and Opt+Arrow/Enter work; Send-to-terminal is a click
   var modalFocusTries = 0;
   var tryFocusModal = function () {
     if (!document.getElementById('mc-modal')) return true;
     if (document.activeElement === modalFocusTarget) return true;
-    try { modalFocusTarget.focus(); if (modalFocusTarget === area) modalFocusTarget.select(); } catch (e) {}
+    try { modalFocusTarget.focus(); modalFocusTarget.selectionStart = modalFocusTarget.selectionEnd = 0; } catch (e) {}
     return document.activeElement === modalFocusTarget;
   };
   if (!tryFocusModal()) {

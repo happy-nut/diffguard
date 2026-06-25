@@ -860,8 +860,8 @@ body.mc-composing .source-row.cursor-line .num { color: inherit; }
 .mc-modal-head span { margin-right: auto; }
 .mc-modal-text { width: 100%; height: 100%; box-sizing: border-box; resize: none; border: 0; padding: 12px; background: var(--bg); color: var(--text); caret-color: var(--text); font: 12px/1.55 Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .mc-modal-text:focus { outline: none; }
-.mc-dropdown { position: fixed; z-index: 70; min-width: 150px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); padding: 4px; }
-.mc-dropdown-item { display: block; width: 100%; text-align: left; padding: 7px 12px; border: 0; background: transparent; color: var(--text); border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.mc-dropdown { position: fixed; z-index: 70; min-width: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); padding: 3px; }
+.mc-dropdown-item { display: block; width: 100%; text-align: left; padding: 4px 10px; border: 0; background: transparent; color: var(--text); border-radius: 4px; font-size: 12px; line-height: 1.5; cursor: pointer; white-space: nowrap; }
 .mc-dropdown-item.active, .mc-dropdown-item:hover { background: var(--active); color: #fff; }
 #mc-toasts { position: fixed; left: 16px; bottom: 16px; z-index: 80; display: flex; flex-direction: column; gap: 8px; max-width: 360px; pointer-events: none; }
 .mc-toast { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-left: 3px solid var(--active); border-radius: 8px; padding: 10px 14px; font-size: 13px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); opacity: 0; transform: translateY(8px); transition: opacity .25s ease, transform .25s ease; }
