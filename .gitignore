@@ -5,3 +5,4 @@ dist/
 .omc/
 .agents/
 *.log
+release/

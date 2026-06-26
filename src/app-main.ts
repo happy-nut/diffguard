@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { spawnSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import { buildDiffReview, performHttpRequest, type HttpSendRequest } from "./cli.js";
 import { sanitizeTerminalEnv } from "./util.js";
 import { readUnifiedDiff } from "./diff.js";
+import { isGitRepository } from "./git.js";
+import { renderWelcomeHtml } from "./render.js";
 import { createHash } from "node:crypto";
 import { spawn as spawnPty, type IPty } from "node-pty";
 
@@ -56,6 +58,19 @@ function isLightTheme(): boolean {
 }
 
 app.setName("monacori");
+// Best-effort re-brand at startup. macOS shows the Dock / Cmd+Tab / menu-bar name from Electron.app's
+// CFBundleName + executable name, which app.setName() CANNOT change — only scripts/patch-electron-name.mjs
+// (run at postinstall) renames them. That postinstall step can be skipped (npm --ignore-scripts) or fail on
+// perms, leaving "Electron" everywhere. Re-run the patch here in a Node context (ELECTRON_RUN_AS_NODE) so a
+// fresh install self-heals; it's idempotent and takes effect on the NEXT launch.
+if (process.platform === "darwin") {
+  try {
+    const patchScript = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "patch-electron-name.mjs");
+    if (existsSync(patchScript)) {
+      spawn(process.execPath, [patchScript], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: "ignore", detached: true }).unref();
+    }
+  } catch { /* best-effort — postinstall remains the primary path */ }
+}
 
 ipcMain.handle("monacori:http-send", (_event, request: HttpSendRequest) => performHttpRequest(request));
 
@@ -70,42 +85,60 @@ ipcMain.handle("monacori:get-file", (_event, request: { index?: number }) => {
 // Phase 2b lazy-LOAD: serve the full source files JSON (with content) on demand.
 ipcMain.handle("monacori:get-source-data", () => currentSourceData);
 
+// Welcome screen's "Open Folder" button: pick a directory; load it if it's a git repo, else report back.
+ipcMain.handle("monacori:open-folder", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openDirectory"],
+    title: "Open a Git repository",
+  });
+  if (result.canceled || !result.filePaths[0]) return { ok: false };
+  const root = result.filePaths[0];
+  if (!isGitRepository(root)) return { ok: false, error: "not-git" };
+  await openReview(root);
+  return { ok: true };
+});
+
 // Self-update: install the latest published package globally, then relaunch so the updated code loads.
 // Runs in the main process because the sandboxed renderer can't spawn npm. Returns {ok:true} (and
 // relaunches shortly after) or {ok:false,error} so the renderer can fall back to the manual command.
-ipcMain.handle("monacori:self-update", () => {
-  const result = spawnSync("npm", ["install", "-g", "@happy-nut/monacori@latest"], {
-    encoding: "utf8",
-    shell: true,
-    env: process.env,
-    timeout: 5 * 60 * 1000,
-  });
-  if ((result.status ?? 1) === 0) {
-    // Let the renderer paint "Restarting…", then start the freshly-installed CLI as a NEW detached
-    // process and exit. app.relaunch() re-runs THIS process, but the global install just replaced our
-    // on-disk dist (and possibly the bundled Electron), so the current process is stale — relaunching
-    // it can boot the old code or fail outright. Spawning `mo` loads the new code; a sanitized env
-    // keeps this update run's npm_* vars out of the fresh process. Falls back to relaunch if spawn fails.
-    setTimeout(() => {
-      try {
-        const child = spawn("mo", [], {
-          cwd: options.root,
-          detached: true,
-          stdio: "ignore",
-          env: sanitizeTerminalEnv(process.env),
-          shell: true,
-        });
-        child.unref();
-      } catch {
-        app.relaunch();
-      }
-      app.exit(0);
-    }, 400);
-    return { ok: true };
+ipcMain.handle("monacori:self-update", () => new Promise<{ ok: boolean; error?: string }>((resolve) => {
+  // Async, NOT spawnSync: spawnSync froze the ENTIRE main process for the whole npm install (up to
+  // minutes), so the app looked hung and "nothing happened" — even the renderer's "Updating…" couldn't
+  // paint and the user saw no restart. Stream it so the UI stays responsive; resolve on close.
+  let out = "";
+  let child: import("node:child_process").ChildProcess;
+  try {
+    child = spawn("npm", ["install", "-g", "@happy-nut/monacori@latest"], { shell: true, env: process.env });
+  } catch (error) {
+    resolve({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    return;
   }
-  const detail = (result.stderr || result.stdout || (result.error && result.error.message) || "npm install failed").trim();
-  return { ok: false, error: detail.slice(-600) };
-});
+  child.stdout?.on("data", (d) => { out += String(d); });
+  child.stderr?.on("data", (d) => { out += String(d); });
+  child.on("error", (error) => resolve({ ok: false, error: (error instanceof Error ? error.message : String(error)).slice(-600) }));
+  child.on("close", (code) => {
+    if (code !== 0) { resolve({ ok: false, error: (out || "npm install failed").trim().slice(-600) }); return; }
+    resolve({ ok: true });
+    // The global install replaced our on-disk dist, so THIS process is stale. Start the freshly-installed
+    // CLI as a NEW detached process, then exit. If `mo` isn't on the (GUI) app's PATH it errors or exits
+    // non-zero — fall back to app.relaunch() so the user is never left without a restart (the bug: a failed
+    // `mo` spawn under detached/unref went unnoticed and the app just exited without relaunching).
+    setTimeout(() => {
+      let done = false;
+      const relaunch = () => { if (done) return; done = true; try { app.relaunch(); } catch { /* nothing else to try */ } app.exit(0); };
+      try {
+        const c = spawn("mo", [], { cwd: options.root, detached: true, stdio: "ignore", env: sanitizeTerminalEnv(process.env), shell: true });
+        c.on("error", relaunch);
+        c.on("exit", (exitCode) => { if (exitCode && exitCode !== 0) relaunch(); });
+        c.unref();
+        setTimeout(() => { if (!done) { done = true; app.exit(0); } }, 800); // `mo` launched fine -> hand off and exit
+      } catch {
+        relaunch();
+      }
+    }, 600);
+  });
+}));
 
 // Integrated terminal: own node-pty sessions in the main process (the sandboxed renderer can't spawn
 // them) and relay bytes to the renderer's xterm panes. Each split pane gets its own pty, keyed by id, so
@@ -178,6 +211,9 @@ const iconPath = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "
 const preloadPath = join(dirname(fileURLToPath(import.meta.url)), "preload.cjs");
 
 const options = parseArgs(process.argv.slice(2));
+// A packaged .app (double-clicked) has no useful cwd — it's "/" or the bundle, not a git repo. Start in
+// "welcome" mode (an Open Folder button) instead of crashing on chdir("/")+mkdir or showing an empty diff.
+const guideMode = app.isPackaged && !isGitRepository(options.root);
 let mainWindow: BrowserWindow | undefined;
 let currentSignature = "";
 let refreshTimer: NodeJS.Timeout | undefined;
@@ -191,8 +227,11 @@ app.whenReady().then(async () => {
   // Foreground (`npm run dev` / `mo --foreground`) surfaces this in the terminal; detached `mo` drops
   // it. Either way the path disambiguates a local checkout from the installed package.
   console.error(`[monacori] ${DEV_BUILD ? "DEV build" : "build"} — ${app.getAppPath()} (electron ${process.versions.electron})`);
-  process.chdir(options.root);
-  mkdirSync(FLOW_DIR, { recursive: true });
+  // Packaged double-click defers chdir/mkdir until a folder is picked (openReview); chdir("/")+mkdir crashes.
+  if (!guideMode) {
+    process.chdir(options.root);
+    mkdirSync(FLOW_DIR, { recursive: true });
+  }
   // Keep the standard Edit/Window roles so Cmd+C/V/X/A (copy comments into prompts) and Cmd+Q work.
   // The in-window menu bar stays hidden on Windows/Linux via autoHideMenuBar; macOS shows it in the top bar.
   const sendMerged = (kind: "q" | "c") => mainWindow?.webContents.send("monacori:merged-view", kind);
@@ -291,6 +330,7 @@ app.whenReady().then(async () => {
   // the review HTML then takes over, so there's no blank gap when loadFile swaps the page in.
   setTimeout(() => {
     try {
+      if (guideMode) { void showWelcome(); return; } // packaged, no cwd repo -> Open Folder screen
       const firstBuild = writeReviewFile(options);
       currentSignature = firstBuild.signature;
       if (mainWindow && !mainWindow.isDestroyed()) void mainWindow.loadFile(reviewPath());
@@ -369,6 +409,29 @@ function writeReviewFile(input: AppOptions): { signature: string; html: string; 
 
 function reviewPath(): string {
   return join(options.root, FLOW_DIR, REVIEW_FILE);
+}
+
+// Welcome screen for the packaged .app (double-clicked, no cwd repo). Written to userData (we can't write
+// the review file under "/") and loaded so preload exposes window.monacoriApp.openFolder to its button.
+async function showWelcome(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const welcomePath = join(app.getPath("userData"), "welcome.html");
+  mkdirSync(dirname(welcomePath), { recursive: true });
+  writeFileSync(welcomePath, renderWelcomeHtml(isLightTheme()));
+  await mainWindow.loadFile(welcomePath);
+}
+
+// Load a chosen git repo's review — the initial open, or after the welcome screen's folder picker. Switches
+// cwd, (re)writes the review, swaps the page, and re-arms the watch timer for the new root.
+async function openReview(root: string): Promise<void> {
+  options.root = root;
+  process.chdir(root);
+  mkdirSync(FLOW_DIR, { recursive: true });
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = undefined; }
+  const build = writeReviewFile(options);
+  currentSignature = build.signature;
+  if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadFile(reviewPath());
+  if (options.watch) refreshTimer = setInterval(refreshIfChanged, WATCH_INTERVAL_MS);
 }
 
 function parseArgs(args: string[]): AppOptions {

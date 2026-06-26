@@ -3,6 +3,7 @@
   "version": "0.1.20",
   "description": "Validation control plane for AI-generated code changes.",
   "type": "module",
+  "main": "dist/app-main.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/happy-nut/monacori.git"
@@ -35,7 +36,8 @@
     "prepare": "npm run build",
     "smoke": "npm run build && node dist/cli.js --help",
     "pretest": "npm run build",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "dist:mac": "npm run build && electron-packager . Monacori --platform=darwin --arch=arm64 --icon=assets/icon.icns --app-bundle-id=dev.happynut.monacori --app-category-type=public.app-category.developer-tools --out=release --overwrite --no-asar --ignore=/src/ --ignore=/test/ --ignore=/release --ignore=/.git --ignore=/.github --ignore=/.omc --ignore=/openspec --ignore=/node_modules/electron/ --ignore=/node_modules/@electron --ignore=/node_modules/typescript --ignore=/node_modules/jsdom"
   },
   "keywords": [
     "ai",
@@ -47,6 +49,7 @@
   "author": "happy-nut <happynut.dev@gmail.com>",
   "license": "MIT",
   "devDependencies": {
+    "@electron/packager": "^20.0.1",
     "@types/node": "^22.15.21",
     "jsdom": "^29.1.1",
     "typescript": "^5.8.3"

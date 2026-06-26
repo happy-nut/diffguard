@@ -55,6 +55,12 @@ contextBridge.exposeInMainWorld("monacoriUpdate", {
   run: (): Promise<unknown> => ipcRenderer.invoke("monacori:self-update"),
 });
 
+// Packaged .app (double-clicked, no cwd repo): the welcome screen's "Open Folder" button asks the main
+// process to show a directory picker and load that git repo's review.
+contextBridge.exposeInMainWorld("monacoriApp", {
+  openFolder: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("monacori:open-folder"),
+});
+
 
 // Integrated terminal: bridge the renderer's xterm view to a node-pty owned by the main process (the
 // sandboxed renderer can't spawn a pty). Only present in the Electron app; browser/serve mode lacks it,

@@ -29,36 +29,45 @@ function main() {
   const oldExe = join(macosDir, "Electron");
   const newExe = join(macosDir, APP_NAME);
   const pathTxt = join(root, "path.txt");
-  if (!existsSync(plistPath)) return;
+  if (!existsSync(plistPath)) {
+    console.warn('monacori: Electron.app not found at ' + appDir + ' — skipping rebrand (Dock/menu may show "Electron")');
+    return;
+  }
 
   try {
+    let changed = false;
     // 1. Bundle metadata: name, display name, AND executable -> monacori.
     const before = readFileSync(plistPath, "utf8");
     const after = before
       .replace(/(<key>CFBundleName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1" + APP_NAME + "$2")
       .replace(/(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1" + APP_NAME + "$2")
       .replace(/(<key>CFBundleExecutable<\/key>\s*<string>)[^<]*(<\/string>)/, "$1" + APP_NAME + "$2");
-    if (after !== before) writeFileSync(plistPath, after);
+    if (after !== before) { writeFileSync(plistPath, after); changed = true; }
 
     // 2. Rename the executable so the directly-spawned process is "monacori" (idempotent).
-    if (existsSync(oldExe) && !existsSync(newExe)) renameSync(oldExe, newExe);
+    if (existsSync(oldExe) && !existsSync(newExe)) { renameSync(oldExe, newExe); changed = true; }
 
     // 3. Repoint electron's path.txt at the renamed binary so require("electron") resolves it.
     if (existsSync(pathTxt)) {
       const pt = readFileSync(pathTxt, "utf8");
       const fixed = pt.replace("MacOS/Electron", "MacOS/" + APP_NAME);
-      if (fixed !== pt) writeFileSync(pathTxt, fixed);
+      if (fixed !== pt) { writeFileSync(pathTxt, fixed); changed = true; }
     }
-    // Refresh LaunchServices so the Dock / Cmd+Tab show "monacori" instead of a cached "Electron".
-    // Without this, macOS keeps the previously-registered bundle name even after the plist is patched.
-    spawnSync(
-      "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister",
-      ["-f", appDir],
-      { stdio: "ignore" },
-    );
-    console.log('monacori: branded Electron app + executable as "' + APP_NAME + '"');
-  } catch {
-    // read-only / permission-denied environments — harmless, this is a convenience step
+
+    // Only when something actually changed: refresh LaunchServices so the Dock / Cmd+Tab show "monacori"
+    // instead of a cached "Electron". Skipping it when already-branded keeps the startup re-run cheap.
+    if (changed) {
+      spawnSync(
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister",
+        ["-f", appDir],
+        { stdio: "ignore" },
+      );
+      console.log('monacori: branded Electron app + executable as "' + APP_NAME + '"');
+    }
+  } catch (e) {
+    // Surface the reason (perms / read-only) instead of failing SILENTLY — otherwise the Dock/Cmd+Tab/menu
+    // keep showing "Electron" with no hint why. Non-fatal: app-main.ts re-runs this at startup.
+    console.warn('monacori: could not rebrand the Electron app to "' + APP_NAME + '". Dock/Cmd+Tab/menu may stay "Electron". Reason: ' + (e && e.message ? e.message : e));
   }
 }
 
