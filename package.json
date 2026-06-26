@@ -52,7 +52,6 @@
   "devDependencies": {
     "@electron/packager": "^20.0.1",
     "@types/node": "^22.15.21",
-    "create-dmg": "^8.1.0",
     "jsdom": "^29.1.1",
     "typescript": "^5.8.3"
   },
@@ -67,5 +66,8 @@
     "electron": "^42.4.1",
     "highlight.js": "^11.11.1",
     "node-pty": "^1.1.0"
+  },
+  "optionalDependencies": {
+    "create-dmg": "^8.1.0"
   }
 }
