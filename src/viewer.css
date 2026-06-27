@@ -186,19 +186,21 @@ body {
 .rail-gear { font-size: 16px; line-height: 1; }
 .rail-tip {
   position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
-  display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  display: flex; align-items: center; gap: 12px; white-space: nowrap;
   background: var(--panel); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 5px 9px; font-size: 12px;
+  padding: 6px 8px 6px 11px; font-size: 12.5px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   opacity: 0; pointer-events: none; transition: opacity .12s ease;
   z-index: 90;
 }
 .rail-btn:hover .rail-tip, .rail-btn:focus-visible .rail-tip { opacity: 1; }
 .rail-tip kbd {
-  font: 11px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: var(--muted); background: var(--bg);
-  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
+  /* System font + letter-spacing so ⌘⇧N reads clearly and the glyphs aren't cramped together. */
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 11.5px; font-weight: 500; letter-spacing: 1px;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
 }
 /* Current branch chip under the project name in the sidebar header. */
 .brand-branch { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; min-width: 0; color: var(--muted); font-size: 12px; }
