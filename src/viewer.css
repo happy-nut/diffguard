@@ -328,11 +328,15 @@ body {
 .keys-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 10px; align-items: center; margin-bottom: 2px; }
 .keys-grid kbd {
   justify-self: start;
-  font: 500 14px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  display: inline-block; /* a bare grid item collapsed to ~0 height; inline-block + line-height shows the padding */
+  font-family: Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;       /* labels are 16px — match closely so the ⌘/⇧/⌥ glyphs don't read as tiny */
+  font-weight: 600;
+  line-height: 1.45;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 0;
-  padding: 3px 8px;
+  padding: 4px 9px;
   color: var(--text);
   white-space: nowrap;
 }
