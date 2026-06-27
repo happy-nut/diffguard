@@ -48,6 +48,16 @@ document.addEventListener('keydown', (event) => {
   // shortcuts (Cmd+1, F7, Cmd+[/], Cmd+B, …). Each has its own Esc + editing handlers.
   if (isFloatingModalOpen()) return;
 
+  // Cmd/Ctrl+A in the diff/source view selects ONLY that view's content (the browser default reached into
+  // the sidebar + terminal). In an editable field, let the default select-within-field stand.
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && (event.key === 'a' || event.key === 'A')) {
+    var aae = document.activeElement;
+    if (!(aae && (aae.tagName === 'INPUT' || aae.tagName === 'TEXTAREA' || aae.tagName === 'SELECT')) && selectAllInView()) {
+      event.preventDefault();
+      return;
+    }
+  }
+
   if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === '1') {
     event.preventDefault();
     // Coming from the diff: open the file you were viewing as source so Cmd+1 lands ON it (not a stale/blank

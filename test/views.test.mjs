@@ -538,6 +538,27 @@ test("diff view: vertical wheel + PageUp/Down scroll the diff container", async 
   v.close();
 });
 
+test("Cmd+A in the diff/source view scopes the selection to that view, not the whole page", async () => {
+  const v = await loadViewer(html);
+  // Diff view: selection stays inside the diff container (not the sidebar/terminal).
+  await v.openDiffFor("src/app.ts");
+  v.key("a", { metaKey: true });
+  let sel = v.window.getSelection();
+  assert.ok(sel.rangeCount > 0, "a selection exists");
+  let anc = sel.getRangeAt(0).commonAncestorContainer;
+  anc = anc.nodeType === 1 ? anc : anc.parentElement;
+  assert.ok(v.$("#diff2html-container").contains(anc), "diff Cmd+A stays within the diff container");
+  assert.ok(!v.$(".sidebar").contains(anc), "the sidebar is not part of the selection");
+  // Source view: selection stays inside the source body.
+  await v.openSourceFile("src/app.ts");
+  v.key("a", { metaKey: true });
+  sel = v.window.getSelection();
+  anc = sel.getRangeAt(0).commonAncestorContainer;
+  anc = anc.nodeType === 1 ? anc : anc.parentElement;
+  assert.ok(v.$("#source-body").contains(anc) || anc === v.$("#source-body"), "source Cmd+A stays within the source body");
+  v.close();
+});
+
 test("a blank source line still shows the caret (regression: the empty cell skipped the caret span)", async () => {
   const v = await loadViewer(html);
   await v.openSourceFile("blank.ts");

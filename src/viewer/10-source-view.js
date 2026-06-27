@@ -320,6 +320,26 @@ function isSourceViewerVisible() {
   return Boolean(viewer && !viewer.classList.contains('hidden'));
 }
 
+// Cmd/Ctrl+A scoped to the current view: select the source body, or the active diff file's content —
+// NOT the whole page (the browser default reached into the sidebar/terminal). Returns false if there's
+// no view target so the caller can fall back to the default.
+function selectAllInView() {
+  var target = null;
+  if (isSourceViewerVisible()) target = document.getElementById('source-body');
+  else if (typeof isDiffViewVisible === 'function' && isDiffViewVisible()) {
+    target = document.querySelector('#diff2html-container .d2h-file-wrapper:not(.df-inactive)') || document.getElementById('diff2html-container');
+  }
+  if (!target) return false;
+  try {
+    var sel = window.getSelection();
+    var range = document.createRange();
+    range.selectNodeContents(target);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (e) { return false; }
+  return true;
+}
+
 function openDiffFileAtCaret() {
   if (diffCursor && isDiffViewVisible()) {
     const dwrap = diffWrapperByPath(diffCursor.path);
