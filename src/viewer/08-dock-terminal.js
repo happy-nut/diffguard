@@ -350,6 +350,10 @@ refreshComments();
     // Exception: keep focus for clipboard/selection combos (Cmd+C/V/X/A) so the terminal's own copy &
     // paste keep working — blurring on Cmd+V drops the textarea focus the paste event needs.
     term.attachCustomKeyEventHandler(function (e) {
+      // F7 / Shift+F7 are diff prev/next-change nav. Don't let the terminal eat them (it would send an
+      // escape sequence to the shell); return false so xterm ignores the key and it bubbles to the document
+      // handler. We DON'T blur — the diff caret is a JS cursor, so nav runs while the terminal keeps focus.
+      if (e.type === 'keydown' && e.key === 'F7' && !e.metaKey && !e.ctrlKey && !e.altKey) return false;
       if (e.type === 'keydown' && e.metaKey) {
         var k = (e.key || '').toLowerCase();
         // The bare modifier press (Cmd goes down BEFORE the letter on macOS) must not blur — blurring
