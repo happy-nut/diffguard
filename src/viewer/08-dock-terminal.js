@@ -366,6 +366,10 @@ refreshComments();
         // copy misses xterm's own selection, so Cmd+C silently did nothing. No selection -> fall through.
         if (e.code === 'KeyC' && term.hasSelection && term.hasSelection()) { copyToClipboard(term.getSelection()); return false; }
         if (e.code === 'KeyC' || e.code === 'KeyV' || e.code === 'KeyX' || e.code === 'KeyA') return true;
+        // Cmd/Ctrl+W is the close-pane menu accelerator. onCloseTab closes the FOCUSED pane only if the
+        // terminal still has focus — blurring here first made hasFocus() false, so the focused split pane
+        // never closed. Release the key WITHOUT blurring so focus stays and onCloseTab can close it.
+        if (e.code === 'KeyW') return false;
         try { term.blur(); } catch (x) {}
         return false;
       }
