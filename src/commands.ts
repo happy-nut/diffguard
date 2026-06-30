@@ -52,6 +52,7 @@ function launchReviewApp(args: string[]): void {
   ];
   if (args.includes("--no-watch")) appArgs.push("--no-watch");
 
+  ensureElectronRuntimeBranded();
   const electronBinary = resolveElectronBinary();
   // In dev only (`npm run dev` sets MONACORI_DEV=1) announce which build is launching, so a local checkout
   // is distinguishable from the installed package. Normal `mo` runs stay silent.
@@ -66,6 +67,32 @@ function launchReviewApp(args: string[]): void {
   const child = spawn(electronBinary, appArgs, { detached: true, stdio: "ignore" });
   child.unref();
   console.log("Opened monacori review app.");
+}
+
+type ElectronBrandDeps = {
+  platform?: NodeJS.Platform;
+  execPath?: string;
+  env?: NodeJS.ProcessEnv;
+  existsSync?: typeof existsSync;
+  spawnSync?: typeof spawnSync;
+};
+
+export function ensureElectronRuntimeBranded(deps: ElectronBrandDeps = {}): void {
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "darwin") return;
+
+  const patchScript = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "patch-electron-name.mjs");
+  const exists = deps.existsSync ?? existsSync;
+  if (!exists(patchScript)) return;
+
+  try {
+    (deps.spawnSync ?? spawnSync)(deps.execPath ?? process.execPath, [patchScript], {
+      env: deps.env ?? process.env,
+      stdio: "ignore",
+    });
+  } catch {
+    // Best effort: postinstall and app-main startup repair still cover normal installs.
+  }
 }
 
 function resolveElectronBinary(): string {

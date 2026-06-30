@@ -1,6 +1,6 @@
 {
   "name": "@happy-nut/monacori",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "Validation control plane for AI-generated code changes.",
   "type": "module",
   "main": "dist/app-main.js",
@@ -66,7 +66,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "diff2html": "^3.4.56",
-    "electron": "^42.4.1",
+    "electron": "42.4.1",
     "highlight.js": "^11.11.1",
     "node-pty": "^1.1.0"
   },
