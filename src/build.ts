@@ -4,7 +4,22 @@ import type { DiffReviewBuild } from "./types.js";
 import { isGitRepository, git } from "./git.js";
 import { collectHttpEnvironments, collectReviewFileStates, collectSourceFiles, parseUnifiedDiff, readUnifiedDiff } from "./diff.js";
 import { renderDiff2Html } from "./highlight.js";
-import { diffSubtitle, renderDiffHtml, renderDiffTree, renderNotGitRepoHtml, renderReviewStatus, renderSourceTree, shouldLazyRender, splitDiffForLazy } from "./render.js";
+import {
+  diffSubtitle,
+  extractLazyDiffBody,
+  renderDiffHtml,
+  renderDiffTree,
+  renderLazyDiffShells,
+  renderNotGitRepoHtml,
+  renderReviewStatus,
+  renderSourceTree,
+  shouldLazyRender,
+  splitDiffForLazy,
+} from "./render.js";
+
+export function renderLazyDiffBody(diffText: string): string {
+  return extractLazyDiffBody(renderDiff2Html(diffText));
+}
 
 export function buildDiffReview(input: {
   base?: string;
@@ -45,7 +60,6 @@ export function buildDiffReview(input: {
   const generatedAt = new Date().toISOString();
   // Current branch for the sidebar chip (empty on a detached HEAD); refreshed in the watch payload too.
   const branch = git(root, ["branch", "--show-current"]);
-  const diffHtml = renderDiff2Html(diffText);
   const totalLines = files.reduce((sum, file) => sum + file.hunks.reduce((t, h) => t + h.lines.length, 0), 0);
   // lazy-LOAD (Phase 2) serves each file body + source on demand instead of embedding them; it implies
   // lazy (shells). The transport opts in (serve/Electron pass lazyLoad:true) and we honor it regardless
@@ -56,7 +70,13 @@ export function buildDiffReview(input: {
   const big = shouldLazyRender(files.length, totalLines);
   const lazyLoad = input.lazyLoad ?? false;
   const lazy = lazyLoad || (input.lazy ?? big);
-  const diffSplit = lazy ? splitDiffForLazy(diffHtml, files) : { container: diffHtml, islands: "", bodies: [] as string[] };
+  const lazyBodyDiffs = lazyLoad ? splitUnifiedDiffForLazyBodies(diffText) : undefined;
+  const diffSplit = lazyLoad
+    ? { container: renderLazyDiffShells(files), islands: "", bodies: [] as string[] }
+    : (() => {
+        const diffHtml = renderDiff2Html(diffText);
+        return lazy ? splitDiffForLazy(diffHtml, files) : { container: diffHtml, islands: "", bodies: [] as string[] };
+      })();
   const signature = createHash("sha1")
     .update(diffText)
     .update("\n")
@@ -114,8 +134,17 @@ export function buildDiffReview(input: {
     hunks,
     signature,
     generatedAt,
-    lazyBodies: diffSplit.bodies,
+    lazyBodies: lazyLoad ? [] : diffSplit.bodies,
+    lazyBodyDiffs,
     lazySourceData: lazyLoad ? JSON.stringify(sourceFiles) : undefined,
     update,
   };
+}
+
+function splitUnifiedDiffForLazyBodies(diffText: string): string[] {
+  if (diffText.trim().length === 0) return [];
+  return diffText
+    .split(/(?=^diff --git )/m)
+    .map((chunk) => chunk.replace(/^\n+/, "").trimEnd())
+    .filter((chunk) => chunk.startsWith("diff --git ") && parseUnifiedDiff(chunk).length > 0);
 }

@@ -179,6 +179,32 @@ export function splitDiffForLazy(diffHtml: string, files: DiffFile[]): { contain
   return { container: shells.join("\n"), islands: islands.join("\n"), bodies };
 }
 
+export function renderLazyDiffShells(files: DiffFile[]): string {
+  let hunkIndex = 0;
+  return files
+    .map((file, i) => {
+      const firstHunk = hunkIndex;
+      const hunkCount = file.hunks.length;
+      hunkIndex += hunkCount;
+      const path = file.displayPath;
+      return [
+        `<div id="file-${i}" class="d2h-file-wrapper" data-path="${escapeAttr(path)}" data-first-hunk="${firstHunk}" data-hunk-count="${hunkCount}">`,
+        `<div class="d2h-file-header"><span class="d2h-file-name">${escapeHtml(path)}</span></div>`,
+        '<div class="d2h-files-diff" data-lazy="1"></div>',
+        "</div>",
+      ].join("");
+    })
+    .join("\n");
+}
+
+export function extractLazyDiffBody(diffHtml: string): string {
+  const marker = '<div class="d2h-files-diff">';
+  const open = diffHtml.indexOf(marker);
+  if (open < 0) return "";
+  const after = diffHtml.slice(open + marker.length);
+  return after.replace(/<\/div>\s*<\/div>\s*$/, "");
+}
+
 // The toolbar's review-status row (file/hunk counts, index + live status). Extracted so the in-place
 // update path can re-render just this strip; renderDiffHtml wraps it in <div class="review-status">.
 export function renderReviewStatus(_input: {

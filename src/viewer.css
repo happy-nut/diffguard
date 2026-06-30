@@ -772,6 +772,7 @@ h1 { margin: 0; font-size: 18px; }
    (scheduleSourceReveal / scrolloffReveal), so they don't need — and must not have — scroll-padding. */
 .sidebar-scroll { scroll-padding-block: 35vh; }
 .source-body {
+  --source-gutter-width: 56px;
   border: 1px solid var(--border);
   overflow: auto;
   background: var(--panel);
@@ -782,11 +783,14 @@ h1 { margin: 0; font-size: 18px; }
   min-height: 0;
 }
 /* Extend the line-number gutter (and its divider) to the bottom of the panel so it never stops at the
-   last line with an empty strip + cut-off border below it — one continuous gutter. The .num cell is 58px
-   wide + 8px padding each side + 1px border ≈ 75px; the gradient mirrors that. (pre-wrap = no h-scroll, so
-   a fixed background stays aligned.) */
+   last line with an empty strip + cut-off border below it — one continuous compact gutter. */
 .source-body:not(.empty):not(.image-body) {
-  background-image: linear-gradient(to right, var(--line) 0 74px, var(--border) 74px 75px, var(--panel) 75px);
+  background-image: linear-gradient(
+    to right,
+    var(--line) 0 calc(var(--source-gutter-width) - 1px),
+    var(--border) calc(var(--source-gutter-width) - 1px) var(--source-gutter-width),
+    var(--panel) var(--source-gutter-width)
+  );
   background-repeat: no-repeat;
 }
 /* Boot overlay: painted the instant the review HTML loads, removed once the renderer's bootstrap has drawn
@@ -868,14 +872,14 @@ h1 { margin: 0; font-size: 18px; }
 .source-row.md-row.cursor-line .num,
 .source-row.csv-row.cursor-line .num { color: var(--active); }
 .num {
-  width: 75px;
-  box-sizing: border-box; /* fixed 75px total so the .source-body gutter gradient lines up exactly (no bleed) */
+  width: var(--source-gutter-width);
+  box-sizing: border-box; /* fixed total so the .source-body gutter gradient lines up exactly (no bleed) */
   user-select: none;
   text-align: right;
   color: var(--muted);
   background: var(--line);
   border-right: 1px solid var(--border);
-  padding: 2px 8px;
+  padding: 2px 6px;
 }
 /* Review comments (questions / change-requests) — per-file sidebar count badges (no emoji) */
 .change-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
@@ -896,7 +900,7 @@ h1 { margin: 0; font-size: 18px; }
 .mc-comment-row.mc-row-selected .mc-card { box-shadow: 0 0 0 2px var(--active); }
 .mc-comment-row td { padding: 0; background: var(--bg); }
 .mc-thread-cell { padding: 4px 12px 8px 64px; }
-.source-table .mc-thread-cell { padding: 4px 12px 8px 66px; }
+.source-table .mc-thread-cell { padding: 4px 12px 8px calc(var(--source-gutter-width) + 10px); }
 .mc-card {
   border: 1px solid var(--border);
   border-radius: 0; background: var(--panel); margin: 8px 0; max-width: 760px;

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { main } from "./commands.js";
 
 export { main };
-export { buildDiffReview } from "./build.js";
+export { buildDiffReview, renderLazyDiffBody } from "./build.js";
 export { performHttpRequest } from "./server.js";
 export type { HttpSendRequest, HttpSendResult } from "./types.js";
 

@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import type { DiffReviewBuild, DiffReviewResult, HttpSendRequest, HttpSendResult } from "./types.js";
 import { parsePositiveInteger } from "./util.js";
-import { buildDiffReview } from "./build.js";
+import { buildDiffReview, renderLazyDiffBody } from "./build.js";
 
 // Performs an HTTP request on behalf of the sandboxed renderer. Used by both the
 // Electron IPC handler (app-main.ts) and the browser-mode proxy below.
@@ -103,6 +103,7 @@ export function serveDiffWatch(input: {
   const host = "127.0.0.1";
   const port = input.port ? parsePositiveInteger(input.port, "--port") : 0;
   let lastBuild: DiffReviewBuild | undefined;
+  let lastBodyCache = new Map<number, string>();
   const build = () => {
     lastBuild = buildDiffReview({
       base: input.base,
@@ -114,6 +115,7 @@ export function serveDiffWatch(input: {
       ignoreWhitespace: input.ignoreWhitespace,
       lazyLoad: true, // serve can stream per-file bodies/source over /file + /source
     });
+    lastBodyCache = new Map();
     return lastBuild;
   };
 
@@ -154,10 +156,15 @@ export function serveDiffWatch(input: {
       // git diff per file; falls back to a fresh build if no review has been requested yet.
       if (requestUrl.pathname === "/file") {
         const b = lastBuild ?? build();
-        const bodies = b.lazyBodies ?? [];
         const idx = Number(requestUrl.searchParams.get("index"));
-        if (Number.isInteger(idx) && idx >= 0 && idx < bodies.length) {
-          writeHttp(response, 200, "text/html; charset=utf-8", bodies[idx]);
+        const bodyDiffs = b.lazyBodyDiffs ?? [];
+        if (Number.isInteger(idx) && idx >= 0 && idx < bodyDiffs.length) {
+          let body = lastBodyCache.get(idx);
+          if (body === undefined) {
+            body = renderLazyDiffBody(bodyDiffs[idx]);
+            lastBodyCache.set(idx, body);
+          }
+          writeHttp(response, 200, "text/html; charset=utf-8", body);
         } else {
           writeHttp(response, 404, "text/plain; charset=utf-8", "Not found\n");
         }

@@ -6,7 +6,7 @@
 // fixed by tracking sourceBodyPath (the path actually painted) and re-rendering on mismatch.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { makeReviewHtml, cleanupFixtures } from "./helpers/fixture.mjs";
+import { makeReviewHtml, cleanupFixtures, renderLazyBodies } from "./helpers/fixture.mjs";
 import { loadViewer } from "./helpers/dom.mjs";
 
 let html, lazySourceData;
@@ -22,6 +22,18 @@ before(async () => {
   lazySourceData = r.build.lazySourceData;
 });
 after(cleanupFixtures);
+
+test("lazy-LOAD build keeps initial diff bodies as raw chunks, not pre-rendered HTML", async () => {
+  const marker = "MONACORI_LAZY_BODY_SENTINEL";
+  const r = await makeReviewHtml(
+    [{ path: "src/lazy.ts", before: "export const lazy = 1;\n", after: `export const lazy = "${marker}";\n` }],
+    { lazyLoad: true },
+  );
+  assert.equal((r.build.lazyBodies || []).length, 0, "transport lazy-load must not pre-render every diff body at build time");
+  assert.equal((r.build.lazyBodyDiffs || []).length, 1, "raw per-file diff is retained for on-demand rendering");
+  assert.match(r.build.lazyBodyDiffs[0], new RegExp(marker), "raw diff chunk contains the changed line");
+  assert.doesNotMatch(r.build.lazyBodyDiffs[0], /d2h-file-wrapper/, "raw chunk is not diff2html markup");
+});
 
 test("lazy-LOAD: source view renders each file's OWN content after async fetch", async () => {
   const v = await loadViewer(html, { lazySourceData });
@@ -54,7 +66,7 @@ test("lazy-LOAD: a watch refresh shows the rebuilt diff body, not the cached old
     [{ path: "src/live.ts", before: "export const x = 1;\n", after: "export const x = 111;\n" }],
     { lazyLoad: true },
   );
-  let bodies = b1.build.lazyBodies || [];
+  let bodies = await renderLazyBodies(b1.build);
   const v = await loadViewer(b1.html, {
     menuBridge: true,
     lazySourceData: b1.build.lazySourceData,
@@ -69,7 +81,7 @@ test("lazy-LOAD: a watch refresh shows the rebuilt diff body, not the cached old
     [{ path: "src/live.ts", before: "export const x = 1;\n", after: "export const x = 222;\n" }],
     { lazyLoad: true },
   );
-  bodies = b2.build.lazyBodies || []; // the bridge now serves the rebuilt body for that index
+  bodies = await renderLazyBodies(b2.build); // the bridge now serves the rebuilt body for that index
   await v.pushDiffUpdate(b2.build.update);
   await v.settle(120);
 
@@ -87,7 +99,7 @@ test("lazy-LOAD: a watch refresh is deferred while composing, then applied on cl
     [{ path: "src/live.ts", before: "export const x = 1;\n", after: "export const x = 111;\n" }],
     { lazyLoad: true },
   );
-  let bodies = b1.build.lazyBodies || [];
+  let bodies = await renderLazyBodies(b1.build);
   const v = await loadViewer(b1.html, {
     menuBridge: true,
     lazySourceData: b1.build.lazySourceData,
@@ -103,7 +115,7 @@ test("lazy-LOAD: a watch refresh is deferred while composing, then applied on cl
     [{ path: "src/live.ts", before: "export const x = 1;\n", after: "export const x = 222;\n" }],
     { lazyLoad: true },
   );
-  bodies = b2.build.lazyBodies || [];
+  bodies = await renderLazyBodies(b2.build);
   await v.pushDiffUpdate(b2.build.update);
   await v.settle(120);
   assert.ok(v.visibleComposerInput(), "composer survives the watch refresh (update held)");
@@ -126,7 +138,7 @@ test("lazy-LOAD: a watch refresh keeps an UNCHANGED file's body (no blank, no re
     ],
     { lazyLoad: true },
   );
-  let bodies = b1.build.lazyBodies || [];
+  let bodies = await renderLazyBodies(b1.build);
   const fetched = [];
   const v = await loadViewer(b1.html, {
     menuBridge: true,
@@ -147,7 +159,7 @@ test("lazy-LOAD: a watch refresh keeps an UNCHANGED file's body (no blank, no re
     ],
     { lazyLoad: true },
   );
-  bodies = b2.build.lazyBodies || [];
+  bodies = await renderLazyBodies(b2.build);
   await v.pushDiffUpdate(b2.build.update);
   await v.settle(120);
 
@@ -167,7 +179,7 @@ test("lazy: off-screen change preserves the viewed file's wrapper node, swaps on
     ],
     { lazyLoad: true },
   );
-  let bodies = b1.build.lazyBodies || [];
+  let bodies = await renderLazyBodies(b1.build);
   const v = await loadViewer(b1.html, {
     menuBridge: true,
     lazySourceData: b1.build.lazySourceData,
@@ -187,7 +199,7 @@ test("lazy: off-screen change preserves the viewed file's wrapper node, swaps on
     ],
     { lazyLoad: true },
   );
-  bodies = b2.build.lazyBodies || [];
+  bodies = await renderLazyBodies(b2.build);
   await v.pushDiffUpdate(b2.build.update);
   await v.settle(120);
 

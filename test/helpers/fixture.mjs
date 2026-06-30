@@ -16,10 +16,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST_BUILD = join(HERE, "..", "..", "dist", "build.js");
 
 let buildDiffReviewFn = null;
+let renderLazyDiffBodyFn = null;
 async function loadBuilder() {
   if (!buildDiffReviewFn) {
     const mod = await import(DIST_BUILD);
     buildDiffReviewFn = mod.buildDiffReview;
+    renderLazyDiffBodyFn = mod.renderLazyDiffBody;
   }
   return buildDiffReviewFn;
 }
@@ -82,6 +84,11 @@ export async function makeReviewHtml(files, opts = {}) {
     process.chdir(prev);
   }
   return { dir, html: build.html, build };
+}
+
+export async function renderLazyBodies(build) {
+  await loadBuilder();
+  return (build.lazyBodyDiffs || []).map((diff) => renderLazyDiffBodyFn(diff));
 }
 
 function writeFile(dir, relPath, content) {

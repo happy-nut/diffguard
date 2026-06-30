@@ -3,13 +3,13 @@ import { spawn } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell } from "electron";
-import { buildDiffReview, performHttpRequest, type HttpSendRequest } from "./cli.js";
+import { buildDiffReview, performHttpRequest, renderLazyDiffBody, type HttpSendRequest } from "./cli.js";
 import { sanitizeTerminalEnv, ensureUtf8Locale } from "./util.js";
 import { readGitLog, readCommitDiff } from "./git-log.js";
 import { readUnifiedDiff } from "./diff.js";
 import { isGitRepository } from "./git.js";
 import { renderWelcomeHtml } from "./render.js";
-import { relaunchUpdatedApp } from "./self-update.js";
+import { relaunchUpdatedApp, selfUpdateInstallAttempts } from "./self-update.js";
 import { createHash } from "node:crypto";
 import { spawn as spawnPty, type IPty } from "node-pty";
 
@@ -32,7 +32,8 @@ type WinState = {
   signature: string;
   refreshing: boolean;
   refreshTimer?: NodeJS.Timeout;
-  bodies: string[]; // Phase 2 lazy-LOAD: per-file diff bodies served to THIS window's renderer on demand
+  bodyDiffs: string[]; // Phase 2 lazy-LOAD: raw per-file diffs rendered for THIS window's renderer on demand
+  bodyCache: Map<number, string>; // rendered per-file diff bodies, scoped to the current build
   sourceData: string; // Phase 2b lazy-LOAD: full source-files JSON served on demand
   lastDiffSig: string; // watch fast-path: hash of the last git diff, to skip rebuilds when unchanged
   terms: Map<number, IPty>; // integrated-terminal ptys owned by this window
@@ -126,7 +127,12 @@ ipcMain.handle("monacori:get-file", (event, request: { index?: number }) => {
   const state = stateFromEvent(event);
   if (!state) return "";
   const i = Number(request?.index);
-  return Number.isInteger(i) && i >= 0 && i < state.bodies.length ? state.bodies[i] : "";
+  if (!Number.isInteger(i) || i < 0 || i >= state.bodyDiffs.length) return "";
+  const cached = state.bodyCache.get(i);
+  if (cached !== undefined) return cached;
+  const body = renderLazyDiffBody(state.bodyDiffs[i]);
+  state.bodyCache.set(i, body);
+  return body;
 });
 // Phase 2b lazy-LOAD: serve the full source files JSON (with content) for the calling window on demand.
 ipcMain.handle("monacori:get-source-data", (event) => stateFromEvent(event)?.sourceData ?? "[]");
@@ -200,30 +206,50 @@ ipcMain.handle("monacori:self-update", (event) => new Promise<{ ok: boolean; err
   // minutes), so the app looked hung and "nothing happened" — even the renderer's "Updating…" couldn't
   // paint and the user saw no restart. Stream it so the UI stays responsive; resolve on close.
   let out = "";
-  let child: import("node:child_process").ChildProcess;
-  try {
-    child = spawn("npm", ["install", "-g", "@happy-nut/monacori@latest"], { shell: true, env: process.env });
-  } catch (error) {
-    resolve({ ok: false, error: error instanceof Error ? error.message : String(error) });
-    return;
-  }
-  child.stdout?.on("data", (d) => { out += String(d); });
-  child.stderr?.on("data", (d) => { out += String(d); });
-  child.on("error", (error) => resolve({ ok: false, error: (error instanceof Error ? error.message : String(error)).slice(-600) }));
-  child.on("close", (code) => {
-    if (code !== 0) { resolve({ ok: false, error: (out || "npm install failed").trim().slice(-600) }); return; }
-    resolve({ ok: true });
-    // The global install replaced our on-disk dist, so THIS process is stale. Use Electron's native relaunch
-    // path instead of shelling out to `mo`: GUI apps often have a thin PATH, and a detached shell can fail
-    // without a reliable event before our exit timer fires.
-    setTimeout(() => {
-      try {
-        relaunchUpdatedApp(app, process.argv, cwd);
-      } catch (error) {
-        console.error("monacori: update installed, but relaunch failed: " + (error instanceof Error ? error.message : String(error)));
-      }
-    }, 250);
-  });
+  const attempts = selfUpdateInstallAttempts(process.env, process.platform);
+  const runAttempt = (index: number) => {
+    const attempt = attempts[index];
+    if (!attempt) {
+      resolve({ ok: false, error: (out || "npm install failed").trim().slice(-900) });
+      return;
+    }
+    let attemptOut = "";
+    let done = false;
+    let child: import("node:child_process").ChildProcess;
+    const fail = (reason: string) => {
+      if (done) return;
+      done = true;
+      out += `\n[${attempt.label}] ${reason}`;
+      if (attemptOut.trim()) out += "\n" + attemptOut.trim();
+      runAttempt(index + 1);
+    };
+    try {
+      child = spawn(attempt.command, attempt.args, { shell: attempt.shell, env: process.env });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    child.stdout?.on("data", (d) => { attemptOut += String(d); if (attemptOut.length > 8000) attemptOut = attemptOut.slice(-8000); });
+    child.stderr?.on("data", (d) => { attemptOut += String(d); if (attemptOut.length > 8000) attemptOut = attemptOut.slice(-8000); });
+    child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
+    child.on("close", (code) => {
+      if (code !== 0) { fail(`exit ${code ?? "unknown"}`); return; }
+      if (done) return;
+      done = true;
+      resolve({ ok: true });
+      // The global install replaced our on-disk dist, so THIS process is stale. Use Electron's native relaunch
+      // path instead of shelling out to `mo`: GUI apps often have a thin PATH, and a detached shell can fail
+      // without a reliable event before our exit timer fires.
+      setTimeout(() => {
+        try {
+          relaunchUpdatedApp(app, process.argv, cwd);
+        } catch (error) {
+          console.error("monacori: update installed, but relaunch failed: " + (error instanceof Error ? error.message : String(error)));
+        }
+      }, 250);
+    });
+  };
+  runAttempt(0);
 }));
 
 // Integrated terminal: own node-pty sessions in the main process (the sandboxed renderer can't spawn
@@ -473,7 +499,8 @@ function createWindow(root: string): WinState {
     options: makeOptions(root),
     signature: "",
     refreshing: false,
-    bodies: [],
+    bodyDiffs: [],
+    bodyCache: new Map(),
     sourceData: "[]",
     lastDiffSig: "",
     terms: new Map(),
@@ -557,7 +584,7 @@ async function refreshIfChanged(state: WinState): Promise<void> {
       // whose beforeunload kills every pty — so an integrated terminal running claude/codex would die on
       // each working-tree change. We send only the compact update payload (diff/trees/status/data — no
       // xterm blob), and the renderer transplants it + re-fetches per-file bodies/source over the existing
-      // IPC (state.bodies/state.sourceData were just refreshed by writeReviewFile above).
+      // IPC (state.bodyDiffs/state.sourceData were just refreshed by writeReviewFile above).
       if (next.update) state.win.webContents.send("monacori:diff-update", next.update);
     }
   } catch (error) {
@@ -583,7 +610,8 @@ function writeReviewFile(state: WinState): { signature: string; html: string; up
   // each window loads its own freshly-written copy right after, so a same-repo race is benign.
   mkdirSync(join(state.options.root, FLOW_DIR), { recursive: true });
   writeFileSync(reviewPath(state.options.root), build.html);
-  state.bodies = build.lazyBodies ?? [];
+  state.bodyDiffs = build.lazyBodyDiffs ?? [];
+  state.bodyCache.clear();
   state.sourceData = build.lazySourceData ?? "[]";
   return { signature: build.signature, html: build.html, update: build.update };
 }

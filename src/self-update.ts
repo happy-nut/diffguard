@@ -19,6 +19,32 @@ type RelaunchDeps = {
   env?: NodeJS.ProcessEnv;
 };
 
+export type SelfUpdateInstallAttempt = {
+  label: string;
+  command: string;
+  args: string[];
+  shell: boolean;
+};
+
+const UPDATE_PACKAGE = "@happy-nut/monacori@latest";
+const UPDATE_NPM_ARGS = ["install", "-g", UPDATE_PACKAGE];
+const UPDATE_NPM_COMMAND = "npm install -g " + UPDATE_PACKAGE;
+
+export function selfUpdateInstallAttempts(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): SelfUpdateInstallAttempt[] {
+  const attempts: SelfUpdateInstallAttempt[] = [
+    { label: "npm", command: "npm", args: UPDATE_NPM_ARGS, shell: true },
+  ];
+  if (platform === "darwin") {
+    const shells = new Set<string>();
+    if (env.SHELL && env.SHELL.startsWith("/")) shells.add(env.SHELL);
+    shells.add("/bin/zsh");
+    for (const shellPath of shells) {
+      attempts.push({ label: shellPath + " login shell", command: shellPath, args: ["-lc", UPDATE_NPM_COMMAND], shell: false });
+    }
+  }
+  return attempts;
+}
+
 export function relaunchArgsForCwd(argv: string[], cwd: string): string[] {
   const args = argv.slice(1);
   const cwdIndex = args.indexOf("--cwd");

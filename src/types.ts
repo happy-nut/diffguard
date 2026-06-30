@@ -116,6 +116,9 @@ export type DiffReviewBuild = {
   // Phase 2 lazy-LOAD: per-file diff body HTML, served on demand (IPC / HTTP) instead of embedded,
   // so the initial HTML stays small. Indexed by file order. Empty unless lazyLoad was requested.
   lazyBodies?: string[];
+  // Phase 2c lazy-LOAD: raw per-file unified diff chunks. The app/server render a single body only when
+  // the renderer asks for that file, avoiding a full diff2html render before first paint.
+  lazyBodyDiffs?: string[];
   // Phase 2b lazy-LOAD: full source files JSON (with content), served on demand so the HTML embeds
   // only metadata. undefined unless lazyLoad.
   lazySourceData?: string;

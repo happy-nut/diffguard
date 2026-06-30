@@ -14,6 +14,12 @@ function ruleBodyContaining(needle) {
   return m ? m[2] : null;
 }
 
+function ruleBodyForExactSelector(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = css.match(new RegExp("(^|})\\s*" + escaped + "\\s*\\{([^}]*)\\}", "s"));
+  return m ? m[2] : null;
+}
+
 test("diff stays scrollable for a single big file: .d2h-file-wrapper keeps flex-shrink:0", () => {
   // The bug: #diff2html-container is a column flexbox and .d2h-file-wrapper has overflow:hidden, which makes
   // the flex item's min-height 0. With the default flex-shrink:1, a single shown file (showOnlyFile) shrinks
@@ -47,4 +53,26 @@ test("the comment composer textarea restores its own caret (not transparent-inhe
   const input = ruleBodyContaining(".mc-input");
   assert.ok(input, ".mc-input rule must exist");
   assert.match(input, /caret-color:\s*var\(--text\)/, ".mc-input restores caret-color so the composer caret is visible");
+});
+
+test("source line-number gutter stays compact and internally aligned", () => {
+  const body = ruleBodyContaining(".source-body");
+  assert.ok(body, ".source-body rule must exist");
+  assert.match(body, /--source-gutter-width:\s*56px\b/, "source gutter stays compact");
+
+  const num = ruleBodyForExactSelector(".num");
+  assert.ok(num, ".num rule must exist");
+  assert.match(num, /width:\s*var\(--source-gutter-width\)/, "line-number cells use the shared gutter width");
+  assert.match(num, /padding:\s*2px\s+6px\b/, "line-number padding does not re-widen the gutter");
+
+  assert.match(
+    css,
+    /source-body:not\(\.empty\):not\(\.image-body\)[^{}]*\{[\s\S]*var\(--source-gutter-width\)/,
+    "the gutter background/divider uses the same shared width",
+  );
+  assert.match(
+    css,
+    /\.source-table\s+\.mc-thread-cell[^{}]*\{[^}]*calc\(var\(--source-gutter-width\)\s*\+\s*10px\)/,
+    "source comment rows stay aligned with the compact gutter",
+  );
 });

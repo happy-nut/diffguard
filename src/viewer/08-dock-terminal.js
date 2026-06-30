@@ -733,8 +733,22 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function')
       if (status) { status.textContent = t('settings.updating'); status.classList.add('has-update'); }
       window.monacoriUpdate.run().then(function (r) {
         if (r && r.ok) { if (status) status.textContent = t('settings.updated'); }
-        else { updateBtn.disabled = false; if (status) status.textContent = t('settings.updateFailed'); }
-      }).catch(function () { updateBtn.disabled = false; if (status) status.textContent = t('settings.updateFailed'); });
+        else {
+          updateBtn.disabled = false;
+          if (status) {
+            status.textContent = t('settings.updateFailed');
+            status.title = r && r.error ? String(r.error) : '';
+          }
+          if (r && r.error) console.warn('monacori update failed:', r.error);
+        }
+      }).catch(function (error) {
+        updateBtn.disabled = false;
+        if (status) {
+          status.textContent = t('settings.updateFailed');
+          status.title = error ? String(error) : '';
+        }
+        if (error) console.warn('monacori update failed:', error);
+      });
     });
   }
   if (pta) pta.addEventListener('input', function () { saveMergePrompt('plan', pta.value); flash(); });
@@ -772,4 +786,3 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function')
       applyTheme();
     });
 })();
-

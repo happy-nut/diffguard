@@ -6,6 +6,7 @@ import {
   relaunchArgsForCwd,
   relaunchUpdatedApp,
   resolveGlobalMoBin,
+  selfUpdateInstallAttempts,
 } from "../dist/self-update.js";
 
 test("self-update relaunch args preserve the app entry and replace --cwd with the active repo", () => {
@@ -66,6 +67,20 @@ test("self-update finds the global mo bin from npm prefix", () => {
     spawnSync() { return { status: 0, stdout: "/opt/node\n" }; },
     existsSync(path) { return path === "/opt/node/bin/mo"; },
   }), "/opt/node/bin/mo");
+});
+
+test("self-update install tries npm directly, then a macOS login shell for GUI launches", () => {
+  assert.deepEqual(selfUpdateInstallAttempts({ SHELL: "/bin/bash" }, "darwin"), [
+    { label: "npm", command: "npm", args: ["install", "-g", "@happy-nut/monacori@latest"], shell: true },
+    { label: "/bin/bash login shell", command: "/bin/bash", args: ["-lc", "npm install -g @happy-nut/monacori@latest"], shell: false },
+    { label: "/bin/zsh login shell", command: "/bin/zsh", args: ["-lc", "npm install -g @happy-nut/monacori@latest"], shell: false },
+  ]);
+});
+
+test("self-update install keeps non-macOS updates to npm", () => {
+  assert.deepEqual(selfUpdateInstallAttempts({}, "linux"), [
+    { label: "npm", command: "npm", args: ["install", "-g", "@happy-nut/monacori@latest"], shell: true },
+  ]);
 });
 
 test("self-update launches the newly installed global mo before exiting", () => {

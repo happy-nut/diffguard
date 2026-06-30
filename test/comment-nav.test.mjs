@@ -7,7 +7,7 @@
 // or by a single-line caret — was unreachable by keyboard (and therefore un-editable via `e`).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { makeReviewHtml, cleanupFixtures } from "./helpers/fixture.mjs";
+import { makeReviewHtml, cleanupFixtures, renderLazyBodies } from "./helpers/fixture.mjs";
 import { loadViewer } from "./helpers/dom.mjs";
 
 const FILES = [
@@ -22,7 +22,7 @@ let html, lazy;
 before(async () => {
   html = (await makeReviewHtml(FILES)).html;
   const r = await makeReviewHtml(FILES, { lazyLoad: true });
-  lazy = { html: r.html, bodies: r.build.lazyBodies || [], sourceData: r.build.lazySourceData };
+  lazy = { html: r.html, bodies: await renderLazyBodies(r.build), sourceData: r.build.lazySourceData };
 });
 after(cleanupFixtures);
 
